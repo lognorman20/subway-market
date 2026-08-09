@@ -255,6 +255,11 @@ pub struct FundRainResponse {
     pub status: String,
     pub amount_usdc: i64,
     pub amount_micro: i64,
+    /// Present when sandbox credit-on-simulate credited immediately.
+    #[serde(default)]
+    pub bankroll_usdc: Option<i64>,
+    #[serde(default)]
+    pub credit_note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

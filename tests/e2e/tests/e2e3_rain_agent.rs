@@ -96,33 +96,44 @@ async fn e2e3_rain_fund_agent_trades() {
         fund.funding_id, fund.status
     );
 
-    let settled = match client
-        .poll_funding(&human.session_token, &fund.funding_id)
-        .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            let msg = e.to_string();
-            if is_rain_infra_failure(&msg) {
-                eprintln!("E2E 3 Rain poll failed (sandbox/network): {msg}");
-                write_partial_handoff(
-                    &env,
-                    &client,
-                    &agent.api_key,
-                    agent.agent_id.as_ref(),
-                    None,
-                )
-                .ok();
-                return;
+    // Credit-on-simulate: POST /funding/rain returns status=settled + bankroll
+    // immediately after sandbox simulate — no Rain processing→settled wait.
+    // Only poll when still pending (flag off / real ACH path).
+    let settled_status = if fund.status == "settled" {
+        eprintln!(
+            "Rain settled via credit-on-simulate (skip settle poll) funding_id={}",
+            fund.funding_id
+        );
+        fund.status.clone()
+    } else {
+        let settled = match client
+            .poll_funding(&human.session_token, &fund.funding_id)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                let msg = e.to_string();
+                if is_rain_infra_failure(&msg) {
+                    eprintln!("E2E 3 Rain poll failed (sandbox/network): {msg}");
+                    write_partial_handoff(
+                        &env,
+                        &client,
+                        &agent.api_key,
+                        agent.agent_id.as_ref(),
+                        None,
+                    )
+                    .ok();
+                    return;
+                }
+                panic!("poll_funding: {msg}");
             }
-            panic!("poll_funding: {msg}");
-        }
+        };
+        settled.status
     };
 
-    if settled.status != "settled" {
+    if settled_status != "settled" {
         eprintln!(
-            "E2E 3 Rain not settled (status={}) — treat as sandbox failure beyond control",
-            settled.status
+            "E2E 3 Rain not settled (status={settled_status}) — treat as sandbox failure beyond control"
         );
         write_partial_handoff(&env, &client, &agent.api_key, agent.agent_id.as_ref(), None).ok();
         return;
@@ -134,10 +145,10 @@ async fn e2e3_rain_fund_agent_trades() {
         .expect("bankroll after Rain");
     assert!(
         bankroll.available_usdc > 0,
-        "bankroll must be credited after Rain settle"
+        "bankroll must be credited after Rain settle (credit-on-simulate or poll)"
     );
     eprintln!(
-        "Rain credited bankroll_usdc={}",
+        "Rain credited bankroll_usdc={} (no processing→settled wait required when credit-on-simulate)",
         bankroll.available_usdc
     );
 
