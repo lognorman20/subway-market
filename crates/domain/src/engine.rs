@@ -1,16 +1,20 @@
-//! Engine: apply ingest events → freeze / score.
+//! Engine: apply ingest events → freeze / score / market lifecycle intents.
 //!
 //! `emit=false` during ledger rebuild; `emit=true` live.
 
 use dto::{
-    remaining_stops_to_target, ActualSource, BusEvent, DiffEvent, FreezeEvent, TripSnapshot,
-    VehicleUpdate, WatchableRoutes, EventId,
+    remaining_stops_to_target, ActualSource, BusEvent, DiffEvent, FreezeEvent,
+    MarketOpenRequested, MarketResolveRequested, TripSnapshot, VehicleUpdate, WatchableRoutes,
+    EventId,
 };
 use tracing::{debug, info};
 
 use crate::diff::{dedupe_key, score_arrival};
 use crate::freeze::{clear_freeze, expire_stale_freeze_if_needed, maybe_freeze};
 use crate::log_fmt::{arrival_message, freeze_message};
+use crate::market_lifecycle::{
+    freeze_eligible_for_market, open_requested_from_freeze, resolve_requested_from_diff,
+};
 use crate::state::TripStore;
 use crate::types::TripState;
 
@@ -27,6 +31,8 @@ pub enum EmitMode {
 pub enum DomainEmit {
     Freeze(FreezeEvent),
     Diff(DiffEvent),
+    MarketOpenRequested(MarketOpenRequested),
+    MarketResolveRequested(MarketResolveRequested),
 }
 
 impl DomainEmit {
@@ -47,7 +53,13 @@ pub fn apply(store: &mut TripStore, event: &BusEvent, mode: EmitMode) -> Vec<Dom
         }
         BusEvent::Trip(snap) => on_trip_snapshot(store, snap, mode),
         BusEvent::Vehicle(veh) => on_vehicle(store, veh, mode),
-        BusEvent::Freeze(_) | BusEvent::Diff(_) => {
+        BusEvent::Freeze(_)
+        | BusEvent::Diff(_)
+        | BusEvent::MarketOpenRequested(_)
+        | BusEvent::MarketResolveRequested(_)
+        | BusEvent::MarketOpened(_)
+        | BusEvent::MarketResolved(_)
+        | BusEvent::TradeFilled(_) => {
             vec![]
         }
     }
@@ -101,12 +113,16 @@ fn on_trip_snapshot(
             trip_id: snap.trip_id.clone(),
             route_id: snap.route_id.clone(),
             service_date: snap.service_date.clone(),
+            train_id: snap.nyct_train_id.clone(),
             ..Default::default()
         });
 
     state.route_id = snap.route_id.clone();
     if snap.service_date.is_some() {
         state.service_date = snap.service_date.clone();
+    }
+    if snap.nyct_train_id.is_some() {
+        state.train_id = snap.nyct_train_id.clone();
     }
     state.remaining = snap.remaining.clone();
 
@@ -159,7 +175,7 @@ fn on_trip_snapshot(
                 "freeze"
             );
             if mode == EmitMode::Live {
-                Some(DomainEmit::Freeze(build_freeze_event(&state)))
+                Some(build_freeze_event(&state))
             } else {
                 None
             }
@@ -196,8 +212,26 @@ fn on_trip_snapshot(
         return finish_with_optional_freeze(store, state, actual_unix, source, mode, freeze_emit);
     }
 
+    let train_id = state.train_id.clone();
     store.upsert(state);
-    freeze_emit.into_iter().collect()
+    freeze_emits(freeze_emit, train_id, mode)
+}
+
+fn freeze_emits(
+    freeze: Option<FreezeEvent>,
+    train_id: Option<String>,
+    mode: EmitMode,
+) -> Vec<DomainEmit> {
+    let Some(freeze) = freeze else {
+        return vec![];
+    };
+    let mut out = vec![DomainEmit::Freeze(freeze.clone())];
+    if mode == EmitMode::Live && freeze_eligible_for_market(&freeze) {
+        out.push(DomainEmit::MarketOpenRequested(open_requested_from_freeze(
+            &freeze, train_id,
+        )));
+    }
+    out
 }
 
 fn on_vehicle(
@@ -279,11 +313,12 @@ fn finish_with_optional_freeze(
     actual_unix: i64,
     actual_source: ActualSource,
     mode: EmitMode,
-    freeze_emit: Option<DomainEmit>,
+    freeze_emit: Option<FreezeEvent>,
 ) -> Vec<DomainEmit> {
-    let mut out: Vec<DomainEmit> = freeze_emit.into_iter().collect();
+    let train_id = state.train_id.clone();
+    let mut out = freeze_emits(freeze_emit, train_id, mode);
     if let Some(diff) = score_and_finish(store, state, actual_unix, actual_source, mode) {
-        out.push(diff);
+        out.extend(diff_emits(diff, mode));
     }
     out
 }
@@ -297,7 +332,18 @@ fn finish_trip_with_state(
 ) -> Vec<DomainEmit> {
     score_and_finish(store, state, actual_unix, actual_source, mode)
         .into_iter()
+        .flat_map(|diff| diff_emits(diff, mode))
         .collect()
+}
+
+fn diff_emits(diff: DiffEvent, mode: EmitMode) -> Vec<DomainEmit> {
+    let mut out = vec![DomainEmit::Diff(diff.clone())];
+    if mode == EmitMode::Live {
+        out.push(DomainEmit::MarketResolveRequested(
+            resolve_requested_from_diff(&diff),
+        ));
+    }
+    out
 }
 
 fn resolve_actual_unix(state: &TripState, feed_header_unix: i64) -> (i64, ActualSource) {
@@ -319,7 +365,7 @@ fn score_and_finish(
     actual_unix: i64,
     actual_source: ActualSource,
     mode: EmitMode,
-) -> Option<DomainEmit> {
+) -> Option<DiffEvent> {
     let trip_id = state.trip_id.clone();
     let key = dedupe_key(&state);
 
@@ -358,5 +404,116 @@ fn score_and_finish(
         detail = %arrival_message(&diff, actual_source),
         "diff"
     );
-    Some(DomainEmit::Diff(diff))
+    Some(diff)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dto::{EventMeta, StopEta};
+
+    fn watchable(routes: &[&str]) -> BusEvent {
+        BusEvent::Watchable(WatchableRoutes {
+            meta: EventMeta::new(),
+            route_ids: routes.iter().map(|s| (*s).to_string()).collect(),
+            observed_at: chrono::Utc::now(),
+        })
+    }
+
+    fn stop(id: &str, eta: i64) -> StopEta {
+        StopEta {
+            stop_id: id.into(),
+            eta_unix: eta,
+        }
+    }
+
+    fn trip(remaining: Vec<StopEta>, feed: i64) -> BusEvent {
+        BusEvent::Trip(TripSnapshot {
+            meta: EventMeta::new(),
+            trip_id: "t1".into(),
+            route_id: "A".into(),
+            service_date: Some("20260725".into()),
+            remaining,
+            destination_stop_id: "A99".into(),
+            feed_header_unix: feed,
+            nyct_train_id: Some("A1234".into()),
+        })
+    }
+
+    #[test]
+    fn freeze_with_three_ahead_emits_open_requested() {
+        let mut store = TripStore::new();
+        apply(&mut store, &watchable(&["A"]), EmitMode::Live);
+        let feed = 1_700_000_000;
+        // remaining[0]=current, [1],[2],[3]=target → 3 stops away
+        let remaining = vec![
+            stop("A01", feed),
+            stop("A02", feed + 60),
+            stop("A03", feed + 120),
+            stop("A04", feed + 180),
+        ];
+        let emits = apply(&mut store, &trip(remaining, feed), EmitMode::Live);
+        assert!(
+            emits.iter().any(|e| matches!(e, DomainEmit::Freeze(_))),
+            "expected freeze"
+        );
+        let open = emits.iter().find_map(|e| match e {
+            DomainEmit::MarketOpenRequested(o) => Some(o),
+            _ => None,
+        });
+        let open = open.expect("open_requested");
+        assert_eq!(open.stop_id, "A04");
+        assert_eq!(open.frozen_eta_unix, feed + 180);
+        assert_eq!(open.train_id.as_deref(), Some("A1234"));
+    }
+
+    #[test]
+    fn short_freeze_skips_open_requested() {
+        let mut store = TripStore::new();
+        apply(&mut store, &watchable(&["A"]), EmitMode::Live);
+        let feed = 1_700_000_000;
+        // only 1 stop ahead → freeze may lock remaining[1], but <3 → no market
+        let remaining = vec![stop("A01", feed), stop("A02", feed + 60)];
+        let emits = apply(&mut store, &trip(remaining, feed), EmitMode::Live);
+        assert!(emits.iter().any(|e| matches!(e, DomainEmit::Freeze(_))));
+        assert!(!emits
+            .iter()
+            .any(|e| matches!(e, DomainEmit::MarketOpenRequested(_))));
+    }
+
+    #[test]
+    fn arrival_emits_resolve_requested_exact_early() {
+        let mut store = TripStore::new();
+        apply(&mut store, &watchable(&["A"]), EmitMode::Live);
+        let feed = 1_700_000_000;
+        let frozen_eta = feed + 180;
+        let remaining = vec![
+            stop("A01", feed),
+            stop("A02", feed + 60),
+            stop("A03", feed + 120),
+            stop("A04", frozen_eta),
+        ];
+        let emits = apply(&mut store, &trip(remaining, feed), EmitMode::Live);
+        assert!(emits
+            .iter()
+            .any(|e| matches!(e, DomainEmit::MarketOpenRequested(_))));
+
+        // Target gone from remaining; last_target_eta still frozen_eta → exact on-time
+        let remaining_arrived = vec![
+            stop("A05", frozen_eta),
+            stop("A06", frozen_eta + 60),
+        ];
+        let emits = apply(
+            &mut store,
+            &trip(remaining_arrived, frozen_eta),
+            EmitMode::Live,
+        );
+        let resolve = emits.iter().find_map(|e| match e {
+            DomainEmit::MarketResolveRequested(r) => Some(r),
+            _ => None,
+        });
+        let resolve = resolve.expect("resolve_requested");
+        assert_eq!(resolve.outcome, dto::MarketOutcome::Early);
+        assert_eq!(resolve.actual_arrival_unix, frozen_eta);
+    }
 }

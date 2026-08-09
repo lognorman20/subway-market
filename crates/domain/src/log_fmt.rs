@@ -19,12 +19,11 @@ pub(crate) fn format_unix_rfc3339(unix: i64) -> String {
 }
 
 fn lateness_label(diff_seconds: i64) -> &'static str {
+    // Exact-on-time counts as early (no on-time outcome for markets).
     if diff_seconds > 0 {
         "late"
-    } else if diff_seconds < 0 {
-        "early"
     } else {
-        "on-time"
+        "early"
     }
 }
 

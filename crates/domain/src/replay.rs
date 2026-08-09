@@ -89,6 +89,22 @@ pub fn replay_events(store: &mut TripStore, events: &[(String, BusEvent)], mode:
                         "replay suppressed diff emit"
                     );
                 }
+                DomainEmit::MarketOpenRequested(req) => {
+                    debug!(
+                        subject,
+                        event_id = %event_id,
+                        dedupe_key = %req.dedupe_key,
+                        "replay suppressed market.open_requested"
+                    );
+                }
+                DomainEmit::MarketResolveRequested(req) => {
+                    debug!(
+                        subject,
+                        event_id = %event_id,
+                        dedupe_key = %req.dedupe_key,
+                        "replay suppressed market.resolve_requested"
+                    );
+                }
             }
         }
     }

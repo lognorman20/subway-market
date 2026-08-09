@@ -51,6 +51,8 @@ async fn main() -> anyhow::Result<()> {
         db,
         emit_recorder: None,
         freeze_recorder: None,
+        open_recorder: None,
+        resolve_recorder: None,
         test_ledger_has_key: None,
     });
 

@@ -8,6 +8,8 @@ pub struct TripState {
     pub trip_id: String,
     pub route_id: String,
     pub service_date: Option<String>,
+    /// NYCT train id when known (market open context).
+    pub train_id: Option<String>,
     pub destination_stop_id: String,
     pub remaining: Vec<StopEta>,
     pub frozen_eta_unix: Option<i64>,

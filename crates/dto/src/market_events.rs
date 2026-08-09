@@ -25,12 +25,16 @@ pub struct MarketOpenRequested {
 }
 
 /// Domain intent: resolve an open market. Subject: `subway.market.resolve_requested`.
+///
+/// Joins via `dedupe_key` (domain never sees on-chain `market_id` — backend maps it).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarketResolveRequested {
     #[serde(flatten)]
     pub meta: EventMeta,
-    pub market_id: MarketId,
+    /// Same key as freeze / `MarketOpenRequested` / `MarketOpened`.
+    pub dedupe_key: String,
     pub actual_arrival_unix: i64,
+    /// Domain decision: early (arrival ≤ frozen_eta) or late (strictly after). Never unresolved.
     pub outcome: MarketOutcome,
 }
 
@@ -129,5 +133,19 @@ mod tests {
         let back: MarketOpenRequested = serde_json::from_str(&json).unwrap();
         assert_eq!(back.dedupe_key, "t1:A99:20260725");
         assert!(!back.meta.event_id.0.is_empty());
+    }
+
+    #[test]
+    fn market_resolve_requested_round_trip() {
+        let req = MarketResolveRequested {
+            meta: EventMeta::new(),
+            dedupe_key: "t1:A99:20260725".into(),
+            actual_arrival_unix: 1_700_000_000,
+            outcome: MarketOutcome::Early,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: MarketResolveRequested = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.dedupe_key, "t1:A99:20260725");
+        assert_eq!(back.outcome, MarketOutcome::Early);
     }
 }

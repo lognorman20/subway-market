@@ -5,7 +5,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use diesel_async::pooled_connection::deadpool::Pool;
 use diesel_async::AsyncPgConnection;
-use dto::{BusEvent, DiffEvent, FreezeEvent};
+use dto::{
+    BusEvent, DiffEvent, FreezeEvent, MarketOpenRequested, MarketResolveRequested,
+    MARKET_OPEN_REQUESTED, MARKET_RESOLVE_REQUESTED,
+};
 use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
 use transport::{EventHandler, TransportError};
@@ -25,6 +28,12 @@ pub struct DomainHandler {
     /// Test-only: capture emitted freezes.
     #[doc(hidden)]
     pub freeze_recorder: Option<Arc<Mutex<Vec<FreezeEvent>>>>,
+    /// Test-only: capture market open intents.
+    #[doc(hidden)]
+    pub open_recorder: Option<Arc<Mutex<Vec<MarketOpenRequested>>>>,
+    /// Test-only: capture market resolve intents.
+    #[doc(hidden)]
+    pub resolve_recorder: Option<Arc<Mutex<Vec<MarketResolveRequested>>>>,
     /// Test-only: simulate ledger dedupe lookup (`true` → skip emit).
     #[doc(hidden)]
     pub test_ledger_has_key: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
@@ -88,6 +97,28 @@ impl DomainHandler {
                             dedupe_key = %diff.dedupe_key,
                             diff_seconds = diff.diff_seconds,
                             "diff emitted"
+                        );
+                    }
+                }
+                DomainEmit::MarketOpenRequested(req) => {
+                    if mode == EmitMode::Live {
+                        self.publish_open_requested(&req).await?;
+                        debug!(
+                            event_id = %req.meta.event_id.as_ref(),
+                            dedupe_key = %req.dedupe_key,
+                            stop_id = %req.stop_id,
+                            "market.open_requested emitted"
+                        );
+                    }
+                }
+                DomainEmit::MarketResolveRequested(req) => {
+                    if mode == EmitMode::Live {
+                        self.publish_resolve_requested(&req).await?;
+                        debug!(
+                            event_id = %req.meta.event_id.as_ref(),
+                            dedupe_key = %req.dedupe_key,
+                            outcome = %req.outcome.as_str(),
+                            "market.resolve_requested emitted"
                         );
                     }
                 }
@@ -157,6 +188,64 @@ impl DomainHandler {
                 );
                 err
             })
+    }
+
+    async fn publish_open_requested(
+        &self,
+        req: &MarketOpenRequested,
+    ) -> Result<(), TransportError> {
+        if let Some(rec) = &self.open_recorder {
+            rec.lock().await.push(req.clone());
+            return Ok(());
+        }
+        let bus = self
+            .bus
+            .as_ref()
+            .expect("bus client required when open_recorder unset");
+        bus.emit(
+            MARKET_OPEN_REQUESTED,
+            &BusEvent::MarketOpenRequested(req.clone()),
+        )
+        .await
+        .map_err(|err| {
+            error!(
+                error = %err,
+                event_id = %req.meta.event_id.as_ref(),
+                dedupe_key = %req.dedupe_key,
+                subject = MARKET_OPEN_REQUESTED,
+                "market.open_requested NATS emit failed"
+            );
+            err
+        })
+    }
+
+    async fn publish_resolve_requested(
+        &self,
+        req: &MarketResolveRequested,
+    ) -> Result<(), TransportError> {
+        if let Some(rec) = &self.resolve_recorder {
+            rec.lock().await.push(req.clone());
+            return Ok(());
+        }
+        let bus = self
+            .bus
+            .as_ref()
+            .expect("bus client required when resolve_recorder unset");
+        bus.emit(
+            MARKET_RESOLVE_REQUESTED,
+            &BusEvent::MarketResolveRequested(req.clone()),
+        )
+        .await
+        .map_err(|err| {
+            error!(
+                error = %err,
+                event_id = %req.meta.event_id.as_ref(),
+                dedupe_key = %req.dedupe_key,
+                subject = MARKET_RESOLVE_REQUESTED,
+                "market.resolve_requested NATS emit failed"
+            );
+            err
+        })
     }
 }
 
