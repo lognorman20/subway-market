@@ -19,6 +19,7 @@ diesel-async = { workspace = true }
 dto = { workspace = true }
 hex = "0.4"
 rand = "0.8"
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
@@ -43,3 +44,5 @@ diesel-async = { workspace = true }
 dto = { workspace = true }
 db = { workspace = true }
 transport = { workspace = true }
+wiremock = "0.6"
+async-trait = { workspace = true }

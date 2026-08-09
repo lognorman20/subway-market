@@ -13,6 +13,7 @@ pub mod lifecycle;
 mod llms;
 mod markets;
 mod pnl;
+pub mod rain;
 mod router;
 mod state;
 mod trade;
@@ -20,8 +21,12 @@ pub mod trading_chain;
 
 pub use auth::AuthStore;
 pub use error::ApiError;
-pub use funding::{FundingConfig, FundingMode};
+pub use funding::{FundingConfig, FundingMode, RainConfig};
 pub use lifecycle::{LifecycleHandler, LIFECYCLE_SUBJECTS};
+pub use rain::{
+    client_from_config, major_decimal_to_micro, HttpRainClient, PendingFundingStore, RainApi,
+    RainClientError, SettlePollConfig,
+};
 pub use router::router;
 pub use state::AppState;
 pub use trading_chain::{

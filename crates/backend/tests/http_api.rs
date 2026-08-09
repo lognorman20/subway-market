@@ -38,6 +38,7 @@ fn funding_local() -> FundingConfig {
     FundingConfig {
         mode: FundingMode::Local,
         seed_bankroll_usdc: 1_000 * 1_000_000,
+        rain: None,
     }
 }
 
@@ -48,6 +49,9 @@ async fn app_state(chain: Option<Arc<dyn backend::TradingChain>>) -> AppState {
         funding: funding_local(),
         chain,
         nats: None,
+        rain: None,
+        pending_funding: backend::PendingFundingStore::new(),
+        settle_poll: None,
     }
 }
 
@@ -65,6 +69,9 @@ async fn app_state_with_nats(chain: Option<Arc<dyn backend::TradingChain>>) -> A
         funding: funding_local(),
         chain,
         nats: Some(connect_nats().await),
+        rain: None,
+        pending_funding: backend::PendingFundingStore::new(),
+        settle_poll: None,
     }
 }
 
