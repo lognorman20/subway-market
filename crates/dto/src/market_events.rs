@@ -19,7 +19,7 @@ pub struct MarketOpenRequested {
     pub train_id: Option<String>,
     pub stop_id: String,
     pub frozen_eta_unix: i64,
-    /// LMSR liquidity `b` (WAD string); backend may default when absent.
+    /// LMSR liquidity `b` in micro-USDC (6 decimals); backend may default when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquidity_b: Option<String>,
 }
@@ -47,6 +47,7 @@ pub struct MarketOpened {
     pub train_id: Option<String>,
     pub stop_id: String,
     pub frozen_eta_unix: i64,
+    /// LMSR liquidity `b` in micro-USDC (6 decimals, matches on-chain `liquidityB`).
     pub liquidity_b: String,
     pub chain_tx_hash: String,
     pub opened_at: DateTime<Utc>,
@@ -74,8 +75,10 @@ pub struct TradeFilled {
     pub agent_id: AgentId,
     pub side: MarketSide,
     pub action: TradeAction,
+    /// Share quantity in micro-USDC (6 decimals).
     pub shares: String,
     pub usdc_amount: i64,
+    /// Marginal price after fill in WAD (1e18 = 100%).
     pub price_wad: String,
     pub chain_tx_hash: String,
     pub filled_at: DateTime<Utc>,
@@ -95,7 +98,7 @@ mod tests {
             agent_id: AgentId::new(),
             side: MarketSide::Early,
             action: TradeAction::Buy,
-            shares: "1000000000000000000".into(),
+            shares: "1000000".into(),
             usdc_amount: 500_000,
             price_wad: "500000000000000000".into(),
             chain_tx_hash: "0xabc".into(),

@@ -47,7 +47,9 @@ pub struct MarketSummary {
     pub trip_id: String,
     pub stop_id: String,
     pub outcome: String,
+    /// Marginal Early price in WAD (1e18 = 100%; matches on-chain `priceEarly`).
     pub price_early_wad: String,
+    /// Marginal Late price in WAD (1e18 = 100%; matches on-chain `priceLate`).
     pub price_late_wad: String,
 }
 
@@ -94,7 +96,7 @@ pub struct AgentSummary {
 pub struct BuyRequest {
     pub market_id: String,
     pub side: MarketSide,
-    /// Share quantity (WAD string).
+    /// Share quantity in micro-USDC (6 decimals, matches on-chain `buy`/`sell` args).
     pub shares: String,
 }
 
@@ -102,6 +104,7 @@ pub struct BuyRequest {
 pub struct SellRequest {
     pub market_id: String,
     pub side: MarketSide,
+    /// Share quantity in micro-USDC (6 decimals).
     pub shares: String,
 }
 

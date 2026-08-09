@@ -1,5 +1,7 @@
 //! Trading domain types — agents, markets, trades, positions, PnL projections.
 //!
+//! **Units:** share quantities, `liquidity_b`, and `q_*` match on-chain USDC 6-decimal
+//! (micro-USDC) scale. Marginal prices (`price_wad`, `last_mark_wad`) are WAD (1e18 = 100%).
 //! Enums mirror `chain::Side` / `chain::Outcome` wire values without depending on `chain`.
 
 use chrono::{DateTime, Utc};
@@ -118,9 +120,11 @@ pub struct Market {
     pub train_id: Option<String>,
     pub stop_id: String,
     pub frozen_eta_unix: i64,
-    /// LMSR liquidity `b` (WAD string).
+    /// LMSR liquidity `b` in micro-USDC (6 decimals, matches on-chain `liquidityB`).
     pub liquidity_b: String,
+    /// Outstanding Early share quantity in micro-USDC (matches on-chain `qEarly`).
     pub q_early: String,
+    /// Outstanding Late share quantity in micro-USDC (matches on-chain `qLate`).
     pub q_late: String,
     pub outcome: MarketOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,11 +149,11 @@ pub struct Trade {
     pub agent_id: AgentId,
     pub side: MarketSide,
     pub action: TradeAction,
-    /// Share quantity (WAD string).
+    /// Share quantity in micro-USDC (6 decimals, matches on-chain balance units).
     pub shares: String,
     /// USDC amount in micro-units (6 decimals).
     pub usdc_amount: i64,
-    /// Marginal price after fill (WAD string).
+    /// Marginal price after fill in WAD (1e18 = 100%; matches `priceEarly`/`priceLate`).
     pub price_wad: String,
     pub chain_tx_hash: String,
     pub filled_at: DateTime<Utc>,
@@ -161,6 +165,7 @@ pub struct Position {
     pub agent_id: AgentId,
     pub market_id: MarketId,
     pub side: MarketSide,
+    /// Open share balance in micro-USDC (6 decimals).
     pub shares: String,
     /// Net USDC paid for open shares (micro-units, average-cost).
     pub cost_basis_usdc: i64,
@@ -172,12 +177,15 @@ pub struct Position {
 pub struct AgentMarketPnl {
     pub agent_id: AgentId,
     pub market_id: MarketId,
+    /// Early-side share balance in micro-USDC (6 decimals).
     pub early_shares: String,
+    /// Late-side share balance in micro-USDC (6 decimals).
     pub late_shares: String,
     pub cost_basis_usdc: i64,
     pub realized_pnl_usdc: i64,
     pub unrealized_pnl_usdc: i64,
     pub total_pnl_usdc: i64,
+    /// Last mark price in WAD (1e18 = 100%; LMSR mid or last trade).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_mark_wad: Option<String>,
     pub resolved: bool,
@@ -208,7 +216,7 @@ mod tests {
         let pnl = AgentMarketPnl {
             agent_id: AgentId::new(),
             market_id: MarketId::from_on_chain(1),
-            early_shares: "1000000000000000000".into(),
+            early_shares: "1000000".into(),
             late_shares: "0".into(),
             cost_basis_usdc: 500_000,
             realized_pnl_usdc: 0,
