@@ -25,12 +25,46 @@ forge build
 forge test
 ```
 
+## Deploy / smoke (local anvil)
+
+Order from repo root (do **not** need full stack / `just start`):
+
+1. **Anvil** (foreground or background):
+
+   ```bash
+   just anvil
+   # → anvil --host 127.0.0.1 --port 8545
+   ```
+
+2. **Deploy** MockUSDC + SubwayMarket (separate terminal):
+
+   ```bash
+   just deploy-local
+   ```
+
+   Uses `MONAD_RPC_URL` (default `http://127.0.0.1:8545`) and `PLATFORM_SIGNER_KEY` (default public anvil #0). Prints:
+
+   ```text
+   USDC_ADDRESS=0x...
+   SUBWAY_MARKET_ADDRESS=0x...
+   ```
+
+   Paste into `.env` (or let the recipe update an existing `.env`). Never commit `.env`.
+
+3. **Tests** (no anvil required):
+
+   ```bash
+   cd apps/contracts && forge test
+   ```
+
+Constructor wiring: `SubwayMarket(usdc, platformSigner)` — platform = broadcast sender (anvil #0). Platform seeds `b * ln(2)` USDC on each `createMarket`.
+
 ## Monad / anvil
 
-- Local: `anvil` on `http://127.0.0.1:8545` (set `MONAD_RPC_URL` in `.env` for remote Monad testnet).
-- `foundry.toml` includes `monad` RPC placeholder — wire when chain lane adds alloy bindings in `crates/chain`.
-- Deploy `MockUSDC` + `SubwayMarket(usdc, platformSigner)`. Platform seeds `b * ln(2)` USDC on each `createMarket`.
+- Local: `just anvil` → `http://127.0.0.1:8545` (`MONAD_RPC_URL` in `.env`).
+- Testnet: set `MONAD_RPC_URL` to Monad testnet RPC; deploy addresses manually into `.env`.
+- `foundry.toml` includes `monad` RPC placeholder — chain lane binds via alloy in `crates/chain`.
 
 ## Ownership
 
-Chain lane owns contract logic + deploy scripts. Coordinate schema changes with `dto` event types.
+Ops slice owns `just anvil` / `just deploy-local` + this deploy section. Chain lane owns contract logic. Coordinate schema changes with `dto` event types.

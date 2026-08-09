@@ -174,3 +174,57 @@ check:
 
 test:
     cargo test --workspace
+
+# ── chain / anvil ────────────────────────────────────────────────────────────
+
+# Host anvil on 127.0.0.1:8545 (foreground; Ctrl-C stops).
+anvil:
+    anvil --host 127.0.0.1 --port 8545
+
+# Deploy MockUSDC + SubwayMarket to local anvil. Prints env lines for .env paste.
+# Requires: just anvil (separate terminal / background). Uses anvil account #0.
+deploy-local:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(git rev-parse --show-toplevel)"
+    rpc="${MONAD_RPC_URL:-http://127.0.0.1:8545}"
+    # foundry.toml etherscan.monad expands this; empty is fine for local.
+    export MONAD_ETHERSCAN_KEY="${MONAD_ETHERSCAN_KEY:-}"
+    # Public anvil #0 — local/dev only. Never use on testnet/mainnet.
+    anvil0_pk="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    pk="${PLATFORM_SIGNER_KEY:-$anvil0_pk}"
+    # Reject truncated/invalid keys (common when copying old docs); fall back to anvil #0.
+    if [[ ! "${pk}" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
+      echo "deploy-local: PLATFORM_SIGNER_KEY invalid (need 0x + 64 hex); using anvil #0" >&2
+      pk="${anvil0_pk}"
+    fi
+    cd "${root}/apps/contracts"
+    echo "deploy-local → ${rpc}"
+    out="$(forge script script/DeployLocal.s.sol:DeployLocal \
+      --rpc-url "${rpc}" \
+      --private-key "${pk}" \
+      --broadcast \
+      -vv)"
+    printf '%s\n' "${out}"
+    usdc="$(printf '%s\n' "${out}" | sed -n 's/.*USDC_ADDRESS=\(0x[0-9a-fA-F]*\).*/\1/p' | tail -1)"
+    market="$(printf '%s\n' "${out}" | sed -n 's/.*SUBWAY_MARKET_ADDRESS=\(0x[0-9a-fA-F]*\).*/\1/p' | tail -1)"
+    if [[ -z "${usdc}" || -z "${market}" ]]; then
+      echo "deploy-local: failed to parse USDC_ADDRESS / SUBWAY_MARKET_ADDRESS from forge output" >&2
+      exit 1
+    fi
+    echo ""
+    echo "# paste into .env (never commit .env):"
+    echo "USDC_ADDRESS=${usdc}"
+    echo "SUBWAY_MARKET_ADDRESS=${market}"
+    env_file="${root}/.env"
+    if [[ -f "${env_file}" ]]; then
+      tmp="$(mktemp)"
+      # Drop prior values then append fresh deploy addresses.
+      grep -vE '^(USDC_ADDRESS|SUBWAY_MARKET_ADDRESS)=' "${env_file}" > "${tmp}" || true
+      printf 'USDC_ADDRESS=%s\nSUBWAY_MARKET_ADDRESS=%s\n' "${usdc}" "${market}" >> "${tmp}"
+      mv "${tmp}" "${env_file}"
+      echo "updated ${env_file}"
+    else
+      echo "no .env at repo root — copy .env.example → .env then re-run, or paste lines above"
+    fi
+
