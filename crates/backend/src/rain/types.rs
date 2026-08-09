@@ -43,6 +43,27 @@ pub struct PaymentRoute {
     pub deposit_address: Option<serde_json::Value>,
 }
 
+/// GET `/payment-routes` body. Sandbox returns `{ paymentRoutes, automations }`;
+/// wiremock/legacy may still send a bare array.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum PaymentRoutesListBody {
+    Wrapped {
+        #[serde(rename = "paymentRoutes", default)]
+        payment_routes: Vec<PaymentRoute>,
+    },
+    Bare(Vec<PaymentRoute>),
+}
+
+impl PaymentRoutesListBody {
+    pub fn into_routes(self) -> Vec<PaymentRoute> {
+        match self {
+            Self::Wrapped { payment_routes, .. } => payment_routes,
+            Self::Bare(routes) => routes,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimulatePaymentRouteRequest {
@@ -158,4 +179,25 @@ pub fn major_decimal_to_micro(s: &str) -> Option<i64> {
     }
     let frac_i: i64 = frac_digits.parse().ok()?;
     whole_i.checked_mul(1_000_000)?.checked_add(frac_i)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn payment_routes_list_accepts_sandbox_map() {
+        let raw = r#"{"paymentRoutes":[{"id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","userId":"11111111-1111-1111-1111-111111111111","status":"active","source":{"currency":"usd","rail":"ach"},"destination":{"currency":"usdc","rail":"base"},"depositAddress":{"type":"fiat"}}],"automations":[]}"#;
+        let body: PaymentRoutesListBody = serde_json::from_str(raw).expect("decode map");
+        let routes = body.into_routes();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].id, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    }
+
+    #[test]
+    fn payment_routes_list_accepts_bare_array() {
+        let raw = r#"[]"#;
+        let body: PaymentRoutesListBody = serde_json::from_str(raw).expect("decode array");
+        assert!(body.into_routes().is_empty());
+    }
 }
