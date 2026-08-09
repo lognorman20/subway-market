@@ -1,15 +1,14 @@
-//! HTTP route handlers.
+//! HTTP route handlers (health, trains, auth).
 
-use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    Json,
+use axum::{extract::State, Json};
+use db::{list_tracked_trains, TrackedTrainRow};
+use dto::{
+    AuthChallengeRequest, AuthChallengeResponse, AuthVerifyRequest, AuthVerifyResponse,
+    HealthResponse, TrackedTrain, TrainPhase, TrainsListQuery, TrainsListResponse,
 };
-use db::{list_tracked_trains, QueryError, TrackedTrainRow};
-use dto::{HealthResponse, TrackedTrain, TrainPhase, TrainsListQuery, TrainsListResponse};
-use tracing::error;
+use axum::extract::Query;
 
+use crate::error::ApiError;
 use crate::state::AppState;
 
 const DEFAULT_TRAINS_LIMIT: i64 = 200;
@@ -38,6 +37,34 @@ pub async fn list_trains(
     let trains = rows.into_iter().map(tracked_train_row_to_api).collect();
 
     Ok(Json(TrainsListResponse { trains }))
+}
+
+pub async fn auth_challenge(
+    State(state): State<AppState>,
+    Json(req): Json<AuthChallengeRequest>,
+) -> Result<Json<AuthChallengeResponse>, ApiError> {
+    let (challenge_id, message, expires_at) =
+        state.auth.issue_challenge(&req.address).await?;
+    Ok(Json(AuthChallengeResponse {
+        challenge_id,
+        message,
+        expires_at,
+    }))
+}
+
+pub async fn auth_verify(
+    State(state): State<AppState>,
+    Json(req): Json<AuthVerifyRequest>,
+) -> Result<Json<AuthVerifyResponse>, ApiError> {
+    let (session_token, wallet, expires_at) = state
+        .auth
+        .verify_challenge(&req.challenge_id, &req.address, &req.signature)
+        .await?;
+    Ok(Json(AuthVerifyResponse {
+        session_token,
+        wallet,
+        expires_at,
+    }))
 }
 
 fn tracked_train_row_to_api(row: TrackedTrainRow) -> TrackedTrain {
@@ -72,28 +99,5 @@ fn phase_from_db(phase: &str) -> TrainPhase {
         "arrived" => TrainPhase::Arrived,
         "acted" => TrainPhase::Acted,
         _ => TrainPhase::Watching,
-    }
-}
-
-#[derive(Debug)]
-pub enum ApiError {
-    Internal(String),
-}
-
-impl From<QueryError> for ApiError {
-    fn from(err: QueryError) -> Self {
-        Self::Internal(err.to_string())
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let (status, message) = match self {
-            Self::Internal(message) => {
-                error!(error = %message, "api error");
-                (StatusCode::INTERNAL_SERVER_ERROR, message)
-            }
-        };
-        (status, message).into_response()
     }
 }

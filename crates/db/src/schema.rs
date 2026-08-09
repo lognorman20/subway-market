@@ -23,6 +23,7 @@ diesel::table! {
         display_name -> Nullable<Text>,
         api_key_hash -> Text,
         created_at -> Timestamptz,
+        bankroll_usdc -> Int8,
     }
 }
 

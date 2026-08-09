@@ -1198,14 +1198,29 @@ dependencies = [
 name = "backend"
 version = "0.1.0"
 dependencies = [
+ "alloy",
+ "anyhow",
+ "async-trait",
  "axum",
+ "chain",
+ "chrono",
  "db",
+ "diesel",
  "diesel-async",
  "dto",
+ "hex",
+ "http-body-util",
+ "rand 0.8.7",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
  "tokio",
+ "tower",
  "tower-http",
  "tracing",
  "transport",
+ "uuid",
 ]
 
 [[package]]
