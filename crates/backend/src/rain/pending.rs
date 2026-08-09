@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -35,11 +35,18 @@ pub struct PendingFundingStore {
     inner: Arc<RwLock<HashMap<String, PendingFunding>>>,
     /// Rain tx ids already credited (idempotent webhook/poll).
     credited_tx: Arc<RwLock<HashMap<String, String>>>,
+    /// Serializes settle credit so webhook+poll cannot double-credit.
+    settle_lock: Arc<Mutex<()>>,
 }
 
 impl PendingFundingStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Exclusive settle lock — hold across credit + mark Settled.
+    pub async fn settle_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.settle_lock.lock().await
     }
 
     pub async fn insert(&self, funding: PendingFunding) {

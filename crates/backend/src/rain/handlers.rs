@@ -225,19 +225,7 @@ pub async fn rain_webhook(
         ));
     }
 
-    // Optional Api-Key check when Rain client configured.
-    if let Some(rain) = state.rain.as_ref() {
-        let expected = &rain.config().api_key;
-        let provided = headers
-            .get("Api-Key")
-            .or_else(|| headers.get("api-key"))
-            .and_then(|v| v.to_str().ok());
-        if let Some(key) = provided {
-            if key != expected {
-                return Err(ApiError::Unauthorized("invalid Api-Key".into()));
-            }
-        }
-    }
+    require_webhook_api_key(&state, &headers)?;
 
     let payload: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
         ApiError::BadRequest(format!("invalid webhook json: {e}"))
@@ -373,15 +361,8 @@ async fn apply_settlement(
     rain_tx_id: &str,
     amount_micro: i64,
 ) -> Result<i64, ApiError> {
-    if state.pending_funding.already_credited(rain_tx_id).await {
-        let funding = state
-            .pending_funding
-            .get(funding_id)
-            .await
-            .ok_or_else(|| ApiError::NotFound(format!("funding {funding_id} not found")))?;
-        let (b, _) = crate::agents::load_bankroll(state, &funding.agent_id).await?;
-        return Ok(b);
-    }
+    // Serialize claim → credit → mark so concurrent webhook/poll cannot double-credit.
+    let _settle = state.pending_funding.settle_lock().await;
 
     let funding = state
         .pending_funding
@@ -389,11 +370,14 @@ async fn apply_settlement(
         .await
         .ok_or_else(|| ApiError::NotFound(format!("funding {funding_id} not found")))?;
 
-    if funding.status == FundingStatus::Settled {
+    if funding.status == FundingStatus::Settled
+        || state.pending_funding.already_credited(rain_tx_id).await
+    {
         let (b, _) = crate::agents::load_bankroll(state, &funding.agent_id).await?;
         return Ok(b);
     }
 
+    // Credit first; on failure leave Pending for retry (do not mark Settled).
     let bankroll = credit_bankroll_locked(state, &funding.agent_id, amount_micro).await?;
 
     state
@@ -418,6 +402,27 @@ async fn apply_settlement(
     );
 
     Ok(bankroll)
+}
+
+/// Require `Api-Key` header present and equal to configured Rain API key.
+fn require_webhook_api_key(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+    let expected = state
+        .rain
+        .as_ref()
+        .map(|c| c.config().api_key.clone())
+        .or_else(|| state.funding.rain.as_ref().map(|c| c.api_key.clone()))
+        .ok_or_else(|| ApiError::Unavailable("Rain not configured for webhooks".into()))?;
+
+    let provided = headers
+        .get("Api-Key")
+        .or_else(|| headers.get("api-key"))
+        .and_then(|v| v.to_str().ok());
+
+    match provided {
+        Some(key) if key == expected => Ok(()),
+        Some(_) => Err(ApiError::Unauthorized("invalid Api-Key".into())),
+        None => Err(ApiError::Unauthorized("missing Api-Key".into())),
+    }
 }
 
 fn require_testnet(state: &AppState) -> Result<(), ApiError> {

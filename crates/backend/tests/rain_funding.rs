@@ -486,6 +486,174 @@ async fn webhook_rejects_bad_api_key() {
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
 
+#[tokio::test]
+async fn webhook_missing_api_key_rejects_and_leaves_bankroll() {
+    let server = MockServer::start().await;
+    let route_id = "e1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    let tx_id = "e2c3d4e5-f6a7-8901-bcde-f12345678901";
+    setup_mocks(&server, route_id, tx_id).await;
+
+    let app = testnet_app(&server).await;
+    let session = human_session(&app).await;
+    let agent = create_agent(&app, &session).await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/funding/rain")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "agent_id": agent.agent_id.as_ref(),
+                        "amount_usdc": 100
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/webhooks/rain")
+                .header("content-type", "application/json")
+                // no Api-Key
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "action": "completed",
+                        "id": tx_id,
+                        "data": {
+                            "id": tx_id,
+                            "type": "transfer",
+                            "transfer": {
+                                "status": "settled",
+                                "source": { "currency": "usd", "rail": "ach", "amount": "100" },
+                                "destination": { "currency": "usdc", "rail": "base", "amount": "100" }
+                            }
+                        }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/agents/{}/bankroll", agent.agent_id.as_ref()))
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let br = json_body(res).await;
+    assert_eq!(br["available_usdc"], 0, "missing Api-Key must not credit");
+}
+
+fn settle_webhook_body(tx_id: &str) -> Body {
+    Body::from(
+        serde_json::to_vec(&json!({
+            "action": "completed",
+            "id": tx_id,
+            "data": {
+                "id": tx_id,
+                "type": "transfer",
+                "transfer": {
+                    "status": "settled",
+                    "source": { "currency": "usd", "rail": "ach", "amount": "100" },
+                    "destination": { "currency": "usdc", "rail": "base", "amount": "100" }
+                }
+            }
+        }))
+        .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn concurrent_webhook_settle_credits_once() {
+    let server = MockServer::start().await;
+    let route_id = "f1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    let tx_id = "f2c3d4e5-f6a7-8901-bcde-f12345678901";
+    setup_mocks(&server, route_id, tx_id).await;
+
+    let app = testnet_app(&server).await;
+    let session = human_session(&app).await;
+    let agent = create_agent(&app, &session).await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/funding/rain")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "agent_id": agent.agent_id.as_ref(),
+                        "amount_usdc": 100
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let mk = || {
+        Request::builder()
+            .method("POST")
+            .uri("/webhooks/rain")
+            .header("content-type", "application/json")
+            .header("Api-Key", "test-rain-key")
+            .body(settle_webhook_body(tx_id))
+            .unwrap()
+    };
+
+    let (r1, r2) = tokio::join!(app.clone().oneshot(mk()), app.clone().oneshot(mk()));
+    let r1 = r1.unwrap();
+    let r2 = r2.unwrap();
+    assert_eq!(r1.status(), StatusCode::OK);
+    assert_eq!(r2.status(), StatusCode::OK);
+    let b1 = json_body(r1).await;
+    let b2 = json_body(r2).await;
+    assert_eq!(b1["bankroll_usdc"], 100_000_000);
+    assert_eq!(b2["bankroll_usdc"], 100_000_000);
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/agents/{}/bankroll", agent.agent_id.as_ref()))
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let br = json_body(res).await;
+    assert_eq!(
+        br["available_usdc"], 100_000_000,
+        "concurrent settle must credit exactly once"
+    );
+}
+
 #[test]
 fn major_decimal_to_micro_parses() {
     use backend::major_decimal_to_micro;
