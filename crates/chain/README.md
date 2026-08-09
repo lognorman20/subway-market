@@ -2,13 +2,26 @@
 
 Alloy bindings + tx helpers for the LMSR `SubwayMarket` (and MockUSDC/IERC20).
 
-## Prereq
+## ABI artifacts (vendored)
+
+`sol!` loads committed JSON under [`abi/`](abi/):
+
+- `abi/SubwayMarket.json`
+- `abi/MockUSDC.json`
+- `abi/IERC20.json`
+
+`cargo check -p chain` works without `apps/contracts/out/` (gitignored).
+
+### Refresh after contract changes
 
 ```bash
 cd apps/contracts && forge build
+cp out/SubwayMarket.sol/SubwayMarket.json ../../crates/chain/abi/SubwayMarket.json
+cp out/MockUSDC.sol/MockUSDC.json ../../crates/chain/abi/MockUSDC.json
+cp out/IERC20.sol/IERC20.json ../../crates/chain/abi/IERC20.json
 ```
 
-Artifacts under `apps/contracts/out/` are gitignored; `sol!` loads them at compile time.
+Commit the updated `abi/*.json` with the chain change.
 
 ## Env (decision #8)
 
@@ -32,4 +45,4 @@ Artifacts under `apps/contracts/out/` are gitignored; `sol!` loads them at compi
 cargo test -p chain
 ```
 
-Anvil integration tests spawn `anvil` via alloy when on PATH; skip cleanly if missing.
+Anvil integration tests spawn `anvil` via alloy when on PATH; skip cleanly if missing. Deploy uses bytecode from the vendored Foundry JSON (no `out/` required at test time).
