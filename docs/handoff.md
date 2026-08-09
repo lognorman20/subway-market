@@ -40,7 +40,7 @@ Lane isolation: no cross-lane crate deps. Shared surface = `dto` + `transport` (
 
 **backend** — HTTP for agents + frontend. Axum; request/response shapes in `dto`. Read Postgres via `db`; tx helpers via `chain`. May listen on the bus for live status. No schema writes, no MTA poll.
 
-**frontend** — HTMX via axum + templates. Call `backend` over HTTP. No NATS, no DB writes, no browser signing. Humans set strategy/bankroll only.
+**frontend** — HTMX via axum + templates. Call `backend` over HTTP. No NATS, no DB writes, no browser-signed LMSR txs. **Phantom wallet connect** for human login/session (see `docs/go_time_prompt.md` #11). Humans set strategy/bankroll only.
 
 **contracts** — Foundry Solidity on Monad: market create, buy/sell, USDC settle, oracle resolve. Local anvil/`forge`; ABIs → `crates/chain`. Not a Cargo member.
 
