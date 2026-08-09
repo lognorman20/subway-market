@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Market {{ detail.market_id }} · Subway Market{% endblock %}
+
+{% block content %}
+<section class="card">
+  <p class="muted" style="margin: 0 0 0.35rem;">
+    <a href="/markets">← Markets</a>
+  </p>
+  <h2 style="margin-bottom: 0.25rem;">
+    Route {{ detail.route_id }} · {{ detail.outcome_label }}
+  </h2>
+  <p class="muted" style="margin-top: 0;">
+    Trip <span class="mono">{{ detail.trip_id }}</span>
+    · stop <span class="mono">{{ detail.stop_id }}</span>
+    · train {{ detail.train_id }}
+    · frozen ETA {{ detail.frozen_eta_label }}
+  </p>
+
+  <div id="market-live"
+       hx-get="/markets/{{ detail.market_id }}/live"
+       hx-trigger="load, every 5s"
+       hx-swap="innerHTML">
+    {% include "market_live.html" %}
+  </div>
+</section>
+
+<section class="card" style="margin-top: 1rem;">
+  <div class="section-head">
+    <h3>Buy / sell</h3>
+    <p class="muted">Human session required. Trades execute via backend (platform signer) — wallet never signs LMSR txs.</p>
+  </div>
+
+  {% if let Some(msg) = agents_banner %}
+  <div class="banner banner-info">{{ msg }}</div>
+  {% endif %}
+
+  <div id="trade-flash">
+    {% if let Some(flash) = trade_flash %}
+      {% if let Some(ok) = trade_ok %}
+      <div class="{% if ok %}banner banner-ok{% else %}banner banner-error{% endif %}">{{ flash }}</div>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  {% if detail.is_open %}
+  <form class="trade-form"
+        hx-post="/markets/{{ detail.market_id }}/trade"
+        hx-target="#trade-flash"
+        hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful){ htmx.trigger('#market-live','htmx:load'); htmx.trigger('#pnl-panel','htmx:load'); }">
+    <label>
+      Agent
+      <select name="agent_id" data-needs-session {% if !trade_enabled %}disabled{% endif %} required>
+        {% if agents.is_empty() %}
+        <option value="">No agents</option>
+        {% else %}
+          {% for a in agents %}
+          <option value="{{ a.agent_id }}">{{ a.label }}</option>
+          {% endfor %}
+        {% endif %}
+      </select>
+    </label>
+    <label>
+      Side
+      <select name="side" data-needs-session {% if !session_present %}disabled{% endif %}>
+        <option value="early">Early</option>
+        <option value="late">Late</option>
+      </select>
+    </label>
+    <label>
+      Shares (USDC, e.g. 1.5 — sent as micro-USDC)
+      <input type="text" name="shares" inputmode="decimal" placeholder="1.0"
+             data-needs-session {% if !session_present %}disabled{% endif %} required>
+    </label>
+    <div class="trade-actions">
+      <button class="btn btn-early" type="submit" name="action" value="buy"
+              data-needs-session {% if !trade_enabled %}disabled{% endif %}>Buy</button>
+      <button class="btn btn-late" type="submit" name="action" value="sell"
+              data-needs-session {% if !trade_enabled %}disabled{% endif %}>Sell</button>
+    </div>
+  </form>
+
+  {% if session_present %}
+  <form style="margin-top: 1rem;" method="post" action="/markets/{{ detail.market_id }}/agents">
+    <label class="muted" style="font-size: 0.85rem; font-weight: 600;">
+      Create agent
+      <div style="display: flex; gap: 0.5rem; margin-top: 0.35rem; flex-wrap: wrap;">
+        <input type="text" name="display_name" placeholder="Display name (optional)"
+               style="padding: 0.45rem 0.55rem; border: 1px solid var(--border); border-radius: 0.4rem; font: inherit;">
+        <button class="btn btn-secondary" type="submit">Create agent</button>
+      </div>
+    </label>
+  </form>
+  {% endif %}
+  {% else %}
+  <div class="banner banner-info">Market resolved ({{ detail.outcome_label }}). Trading closed.</div>
+  {% endif %}
+</section>
+
+<section class="card" style="margin-top: 1rem;">
+  <div class="section-head">
+    <h3>Agent PnL</h3>
+    <p class="muted">Realized / unrealized / total for your agents on this market</p>
+  </div>
+  <div id="pnl-panel"
+       hx-get="/markets/{{ detail.market_id }}/pnl"
+       hx-trigger="load, every 10s"
+       hx-swap="innerHTML">
+    <p class="muted">Loading PnL…</p>
+  </div>
+</section>
+{% endblock %}

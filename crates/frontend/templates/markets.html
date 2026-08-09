@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Markets · Subway Market{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h2>Markets</h2>
+  <p class="muted" style="margin-top: 0;">
+    Binary early/late markets on tracked trains. Open markets start near 50/50.
+  </p>
+
+  {% if let Some(class) = banner_class %}
+    {% if let Some(message) = banner_message %}
+    <div class="{{ class }}">{{ message }}</div>
+    {% endif %}
+  {% endif %}
+
+  {% if let Some(m) = active %}
+  <div class="section-head">
+    <h3>Active market</h3>
+    <p class="muted">Next open market — route {{ m.route_id }} · trip {{ m.trip_id }} · stop {{ m.stop_id }}</p>
+  </div>
+  <a class="market-row" href="/markets/{{ m.market_id }}">
+    <span><strong>{{ m.route_id }}</strong></span>
+    <span>
+      <strong>{{ m.trip_id }}</strong>
+      <span class="muted"> · {{ m.stop_id }}</span>
+    </span>
+    <span class="pct" style="color: var(--early);">E {{ m.price_early_pct }}</span>
+    <span class="pct" style="color: var(--late);">L {{ m.price_late_pct }}</span>
+    <span class="phase">{{ m.outcome_label }}</span>
+  </a>
+  {% endif %}
+
+  <div class="section-head" style="margin-top: 1.25rem;">
+    <h3>Open</h3>
+    <p class="muted">Unresolved markets</p>
+  </div>
+  {% if open.is_empty() %}
+  <p class="muted">No open markets.</p>
+  {% else %}
+    {% for m in open %}
+    <a class="market-row" href="/markets/{{ m.market_id }}">
+      <span><strong>{{ m.route_id }}</strong></span>
+      <span>
+        <strong>{{ m.trip_id }}</strong>
+        <span class="muted"> · {{ m.stop_id }}</span>
+      </span>
+      <span class="pct" style="color: var(--early);">E {{ m.price_early_pct }}</span>
+      <span class="pct" style="color: var(--late);">L {{ m.price_late_pct }}</span>
+      <span class="phase">{{ m.outcome_label }}</span>
+    </a>
+    {% endfor %}
+  {% endif %}
+
+  <div class="section-head" style="margin-top: 1.25rem;">
+    <h3>Resolved</h3>
+    <p class="muted">Settled early or late</p>
+  </div>
+  {% if resolved.is_empty() %}
+  <p class="muted">No resolved markets yet.</p>
+  {% else %}
+    {% for m in resolved %}
+    <a class="market-row" href="/markets/{{ m.market_id }}">
+      <span><strong>{{ m.route_id }}</strong></span>
+      <span>
+        <strong>{{ m.trip_id }}</strong>
+        <span class="muted"> · {{ m.stop_id }}</span>
+      </span>
+      <span class="pct" style="color: var(--early);">E {{ m.price_early_pct }}</span>
+      <span class="pct" style="color: var(--late);">L {{ m.price_late_pct }}</span>
+      <span class="phase">{{ m.outcome_label }}</span>
+    </a>
+    {% endfor %}
+  {% endif %}
+</section>
+{% endblock %}

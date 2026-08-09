@@ -12,7 +12,7 @@ dirs = ["templates"]
 [dependencies]
 anyhow = { workspace = true }
 askama = { workspace = true }
-axum = { workspace = true }
+axum = { workspace = true, features = ["form"] }
 dto = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

@@ -1,0 +1,32 @@
+{% if let Some(class) = banner_class %}
+  {% if let Some(message) = banner_message %}
+  <div class="{{ class }}">{{ message }}</div>
+  {% endif %}
+{% endif %}
+
+{% if !rows.is_empty() %}
+<table>
+  <thead>
+    <tr>
+      <th>Agent</th>
+      <th>Early sh</th>
+      <th>Late sh</th>
+      <th>Realized</th>
+      <th>Unrealized</th>
+      <th>Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td><span class="mono" title="{{ r.agent_id }}">{{ r.agent_label }}</span></td>
+      <td>{{ r.early_shares_label }}</td>
+      <td>{{ r.late_shares_label }}</td>
+      <td>{{ r.realized_label }}</td>
+      <td>{{ r.unrealized_label }}</td>
+      <td><strong>{{ r.total_label }}</strong></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}

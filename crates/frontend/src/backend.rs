@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_json::json;
 
 use crate::trains::TrainView;
 
@@ -48,6 +49,21 @@ pub enum TrainsFetch {
     ParseError(String),
 }
 
+#[derive(Debug, Clone)]
+pub enum BackendFetch<T> {
+    Ok(T),
+    Empty,
+    Unreachable(String),
+    HttpError(u16, String),
+    ParseError(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct TradeResult {
+    pub ok: bool,
+    pub message: String,
+}
+
 impl AppState {
     pub fn new(backend_url: String) -> Self {
         Self {
@@ -56,11 +72,16 @@ impl AppState {
         }
     }
 
+    fn url(&self, path: &str) -> String {
+        format!(
+            "{}{}",
+            self.backend_url.trim_end_matches('/'),
+            path
+        )
+    }
+
     pub async fn fetch_trains(&self) -> TrainsFetch {
-        let url = format!(
-            "{}/trains?limit=200",
-            self.backend_url.trim_end_matches('/')
-        );
+        let url = self.url("/trains?limit=200");
 
         let response = match self.http.get(&url).send().await {
             Ok(resp) => resp,
@@ -81,6 +102,209 @@ impl AppState {
         }
 
         TrainsFetch::Ok(body.trains.into_iter().map(TrainView::from).collect())
+    }
+
+    pub async fn fetch_markets(&self) -> BackendFetch<dto::MarketsListResponse> {
+        self.get_json("/markets").await
+    }
+
+    pub async fn fetch_market(&self, market_id: &str) -> BackendFetch<dto::MarketDetailResponse> {
+        self.get_json(&format!("/markets/{market_id}")).await
+    }
+
+    pub async fn fetch_market_trades(
+        &self,
+        market_id: &str,
+        limit: i64,
+    ) -> BackendFetch<dto::MarketTradesResponse> {
+        self.get_json(&format!("/markets/{market_id}/trades?limit={limit}"))
+            .await
+    }
+
+    pub async fn auth_challenge(
+        &self,
+        address: &str,
+    ) -> BackendFetch<dto::AuthChallengeResponse> {
+        self.post_json("/auth/challenge", &json!({ "address": address }), None)
+            .await
+    }
+
+    pub async fn auth_verify(
+        &self,
+        challenge_id: &str,
+        address: &str,
+        signature: &str,
+    ) -> BackendFetch<dto::AuthVerifyResponse> {
+        self.post_json(
+            "/auth/verify",
+            &json!({
+                "challenge_id": challenge_id,
+                "address": address,
+                "signature": signature,
+            }),
+            None,
+        )
+        .await
+    }
+
+    pub async fn list_agents(
+        &self,
+        session: &str,
+    ) -> BackendFetch<dto::AgentsListResponse> {
+        self.get_json_auth("/agents", session).await
+    }
+
+    pub async fn create_agent(
+        &self,
+        session: &str,
+        display_name: Option<&str>,
+    ) -> BackendFetch<dto::CreateAgentResponse> {
+        let body = match display_name {
+            Some(name) if !name.is_empty() => json!({ "display_name": name }),
+            _ => json!({}),
+        };
+        self.post_json("/agents", &body, Some(session)).await
+    }
+
+    pub async fn list_pnl(&self, session: &str) -> BackendFetch<dto::AgentPnlResponse> {
+        self.get_json_auth("/pnl", session).await
+    }
+
+    pub async fn buy(
+        &self,
+        session: &str,
+        market_id: &str,
+        side: &str,
+        shares: &str,
+        agent_id: &str,
+    ) -> TradeResult {
+        self.trade(session, "/buy", market_id, side, shares, agent_id)
+            .await
+    }
+
+    pub async fn sell(
+        &self,
+        session: &str,
+        market_id: &str,
+        side: &str,
+        shares: &str,
+        agent_id: &str,
+    ) -> TradeResult {
+        self.trade(session, "/sell", market_id, side, shares, agent_id)
+            .await
+    }
+
+    async fn trade(
+        &self,
+        session: &str,
+        path: &str,
+        market_id: &str,
+        side: &str,
+        shares: &str,
+        agent_id: &str,
+    ) -> TradeResult {
+        let body = json!({
+            "market_id": market_id,
+            "side": side,
+            "shares": shares,
+            "agent_id": agent_id,
+        });
+        match self.post_json::<dto::TradeResponse>(path, &body, Some(session)).await {
+            BackendFetch::Ok(resp) => TradeResult {
+                ok: true,
+                message: format!(
+                    "{} {} · {} shares · trade {}",
+                    resp.trade.action.as_str(),
+                    resp.trade.side.as_str(),
+                    resp.trade.shares,
+                    resp.trade.trade_id.0
+                ),
+            },
+            BackendFetch::HttpError(status, msg) => TradeResult {
+                ok: false,
+                message: format!("HTTP {status}: {msg}"),
+            },
+            BackendFetch::Unreachable(err) => TradeResult {
+                ok: false,
+                message: format!("backend unreachable: {err}"),
+            },
+            BackendFetch::ParseError(err) => TradeResult {
+                ok: false,
+                message: format!("parse error: {err}"),
+            },
+            BackendFetch::Empty => TradeResult {
+                ok: false,
+                message: "empty response".into(),
+            },
+        }
+    }
+
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> BackendFetch<T> {
+        let url = self.url(path);
+        let response = match self.http.get(&url).send().await {
+            Ok(resp) => resp,
+            Err(err) => return BackendFetch::Unreachable(err.to_string()),
+        };
+        self.decode_response(response).await
+    }
+
+    async fn get_json_auth<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        session: &str,
+    ) -> BackendFetch<T> {
+        let url = self.url(path);
+        let response = match self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {session}"))
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(err) => return BackendFetch::Unreachable(err.to_string()),
+        };
+        self.decode_response(response).await
+    }
+
+    async fn post_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+        session: Option<&str>,
+    ) -> BackendFetch<T> {
+        let url = self.url(path);
+        let mut req = self.http.post(&url).json(body);
+        if let Some(token) = session {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+        let response = match req.send().await {
+            Ok(resp) => resp,
+            Err(err) => return BackendFetch::Unreachable(err.to_string()),
+        };
+        self.decode_response(response).await
+    }
+
+    async fn decode_response<T: serde::de::DeserializeOwned>(
+        &self,
+        response: reqwest::Response,
+    ) -> BackendFetch<T> {
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let msg = serde_json::from_str::<dto::ApiErrorResponse>(&body)
+                .map(|e| {
+                    e.code
+                        .map(|c| format!("{c}: {}", e.error))
+                        .unwrap_or(e.error)
+                })
+                .unwrap_or(body);
+            return BackendFetch::HttpError(status.as_u16(), msg);
+        }
+        match response.json::<T>().await {
+            Ok(body) => BackendFetch::Ok(body),
+            Err(err) => BackendFetch::ParseError(err.to_string()),
+        }
     }
 }
 

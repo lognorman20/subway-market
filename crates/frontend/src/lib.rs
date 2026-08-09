@@ -4,7 +4,9 @@
 
 mod backend;
 mod config;
+mod markets;
 mod routes;
+mod session;
 mod templates;
 mod trains;
 

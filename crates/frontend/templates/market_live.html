@@ -1,0 +1,65 @@
+<div class="odds-row">
+  <div class="odds-card early">
+    <div class="side-label">Early</div>
+    <div class="price">{{ detail.price_early_pct }}</div>
+    <div class="muted mono" style="font-size: 0.75rem;">{{ detail.price_early_wad }} WAD</div>
+  </div>
+  <div class="odds-card late">
+    <div class="side-label">Late</div>
+    <div class="price">{{ detail.price_late_pct }}</div>
+    <div class="muted mono" style="font-size: 0.75rem;">{{ detail.price_late_wad }} WAD</div>
+  </div>
+</div>
+
+<div class="chart-wrap">
+  <div class="section-head">
+    <h3>Price chart</h3>
+    <p class="muted">
+      {% if detail.chart_empty %}
+      No fills yet — open baseline ~50/50.
+      {% else %}
+      Trade-history mark (newest right). Refreshes with live panel.
+      {% endif %}
+    </p>
+  </div>
+  <svg viewBox="0 0 100 40" role="img" aria-label="Price history">
+    <polyline fill="none" stroke="#0057a8" stroke-width="1.5"
+              points="{{ detail.chart_points }}" />
+    <line x1="0" y1="20" x2="100" y2="20" stroke="#d9dee7" stroke-width="0.5" stroke-dasharray="2 2" />
+  </svg>
+</div>
+
+<div class="section-head">
+  <h3>Trade tape</h3>
+  <p class="muted">Size · time · side · actor</p>
+</div>
+{% if detail.trades.is_empty() %}
+<p class="muted">No trades yet.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Action</th>
+      <th>Side</th>
+      <th>Shares</th>
+      <th>USDC</th>
+      <th>Price</th>
+      <th>Actor</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in detail.trades %}
+    <tr>
+      <td class="mono">{{ t.filled_at }}</td>
+      <td>{{ t.action }}</td>
+      <td>{{ t.side }}</td>
+      <td>{{ t.shares_label }}</td>
+      <td>{{ t.usdc_label }}</td>
+      <td>{{ t.price_pct }}</td>
+      <td><span class="phase">{{ t.actor_type }}</span> <span class="mono">{{ t.actor_label }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}

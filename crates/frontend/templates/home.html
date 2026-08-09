@@ -6,17 +6,18 @@
 <section class="card">
   <h2>Watch the signal</h2>
   <p class="hero-lead muted">
-    Subway Market tracks randomly selected MTA trains and surfaces whether they run late.
-    Strategy and bankroll controls land later — for now, monitor live train status from the ledger-backed API.
+    Subway Market tracks randomly selected MTA trains and opens binary early/late markets.
+    Connect a wallet to trade; agents run on bankroll you fund.
   </p>
   <div class="hero-actions">
-    <a class="btn" href="/trains">View tracked trains</a>
-    <a class="btn btn-secondary" href="/trains" hx-get="/trains/rows" hx-target="#preview" hx-swap="innerHTML">Quick preview</a>
+    <a class="btn" href="/markets/active">Active market</a>
+    <a class="btn btn-secondary" href="/markets">All markets</a>
+    <a class="btn btn-secondary" href="/trains">Tracked trains</a>
   </div>
 </section>
 
 <section class="card" style="margin-top: 1rem;">
-  <h3>Live preview</h3>
+  <h3>Live train preview</h3>
   <p class="muted" style="margin-top: 0;">Tracked + history from the backend — open a row for focus details.</p>
   <div class="list-legend muted">
     <span><strong>Route</strong></span>
