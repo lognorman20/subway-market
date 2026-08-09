@@ -75,11 +75,24 @@ pub struct SimulatePaymentRouteRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimulatePaymentRouteResponse {
-    pub simulation_id: String,
+    /// Present on some Rain responses; sandbox often omits and returns `{ "success": true }`.
+    #[serde(default)]
+    pub simulation_id: Option<String>,
+    /// Sandbox simulate (`POST /simulate/payment-routes`) returns HTTP 202 + `{ "success": true }`.
+    #[serde(default)]
+    pub success: Option<bool>,
     #[serde(default)]
     pub flow: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+impl SimulatePaymentRouteResponse {
+    /// Accepted when Rain returns a simulation id and/or explicit `success: true`.
+    pub fn accepted(&self) -> bool {
+        self.simulation_id.as_ref().is_some_and(|s| !s.is_empty())
+            || self.success == Some(true)
+    }
 }
 
 /// Transfer status from Rain `TransferDetails.status`.
@@ -199,5 +212,23 @@ mod tests {
         let raw = r#"[]"#;
         let body: PaymentRoutesListBody = serde_json::from_str(raw).expect("decode array");
         assert!(body.into_routes().is_empty());
+    }
+
+    #[test]
+    fn simulate_response_accepts_sandbox_success_only() {
+        let body: SimulatePaymentRouteResponse =
+            serde_json::from_str(r#"{"success":true}"#).expect("decode success");
+        assert!(body.accepted());
+        assert!(body.simulation_id.is_none());
+        assert_eq!(body.success, Some(true));
+    }
+
+    #[test]
+    fn simulate_response_accepts_simulation_id() {
+        let body: SimulatePaymentRouteResponse =
+            serde_json::from_str(r#"{"simulationId":"sim_abc","status":"accepted"}"#)
+                .expect("decode sim id");
+        assert!(body.accepted());
+        assert_eq!(body.simulation_id.as_deref(), Some("sim_abc"));
     }
 }

@@ -94,6 +94,28 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    let settle_poll = match std::env::var("RAIN_SETTLE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(secs) if secs > 0 => {
+            let mut cfg = backend::SettlePollConfig::default();
+            cfg.overall_timeout = std::time::Duration::from_secs(secs);
+            // Allow enough attempts for the overall window (bounded backoff already).
+            cfg.max_attempts = ((secs as u32).saturating_mul(2)).max(40);
+            info!(secs, "rain settle poll timeout from RAIN_SETTLE_TIMEOUT_SECS");
+            Some(cfg)
+        }
+        _ if funding.mode == backend::FundingMode::Testnet => {
+            // Sandbox transfer webhooks are async; 30s default often times out.
+            let mut cfg = backend::SettlePollConfig::default();
+            cfg.overall_timeout = std::time::Duration::from_secs(120);
+            cfg.max_attempts = 80;
+            Some(cfg)
+        }
+        _ => None,
+    };
+
     let app = router(AppState {
         pool,
         auth: AuthStore::new(),
@@ -102,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
         nats,
         rain,
         pending_funding: PendingFundingStore::new(),
-        settle_poll: None,
+        settle_poll,
     });
 
     transport::mark_ready();

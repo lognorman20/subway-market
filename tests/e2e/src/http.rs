@@ -21,8 +21,8 @@ pub struct BackendClient {
 
 impl BackendClient {
     pub fn new(cfg: &BackendConfig) -> Result<Self> {
-        // Per-request timeout: allow slow chain-busy backend without failing wait loops.
-        let req_timeout = Duration::from_secs(30).min(cfg.timeout.max(Duration::from_secs(30)));
+        // Per-request timeout: honor E2E_TIMEOUT_SECS (Rain settle poll can exceed 30s).
+        let req_timeout = cfg.timeout.max(Duration::from_secs(30));
         let http = Client::builder()
             .timeout(req_timeout)
             .connect_timeout(Duration::from_secs(5))

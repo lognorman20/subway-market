@@ -91,8 +91,19 @@ pub async fn fund_rain(
         .await
         .map_err(map_rain_err)?;
 
+    if !sim.accepted() {
+        return Err(ApiError::Internal(
+            "Rain simulate did not accept payment route (missing simulationId/success)".into(),
+        ));
+    }
+
     let funding_id = PendingFundingStore::new_id();
     let amount_micro = whole_usdc_to_micro(req.amount_usdc);
+    let simulation_id = sim
+        .simulation_id
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .cloned();
     let pending = PendingFunding {
         id: funding_id.clone(),
         agent_id: req.agent_id,
@@ -100,7 +111,7 @@ pub async fn fund_rain(
         amount_usdc: req.amount_usdc,
         amount_micro,
         payment_route_id: route.id.clone(),
-        simulation_id: Some(sim.simulation_id.clone()),
+        simulation_id: simulation_id.clone(),
         rain_tx_id: None,
         status: FundingStatus::Pending,
         created_at: Utc::now(),
@@ -110,7 +121,8 @@ pub async fn fund_rain(
     info!(
         %funding_id,
         route_id = %route.id,
-        simulation_id = %sim.simulation_id,
+        simulation_id = ?simulation_id,
+        success = ?sim.success,
         amount = req.amount_usdc,
         "rain funding initiated"
     );
@@ -118,7 +130,7 @@ pub async fn fund_rain(
     Ok(Json(FundRainResponse {
         funding_id,
         payment_route_id: route.id,
-        simulation_id: Some(sim.simulation_id),
+        simulation_id,
         amount_usdc: req.amount_usdc,
         amount_micro,
         status: FundingStatus::Pending,
