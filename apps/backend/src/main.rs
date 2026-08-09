@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use backend::{
-    router, trading_chain_connect, AppState, AuthStore, FundingConfig, LifecycleHandler,
-    LIFECYCLE_SUBJECTS,
+    client_from_config, router, trading_chain_connect, AppState, AuthStore, FundingConfig,
+    LifecycleHandler, PendingFundingStore, LIFECYCLE_SUBJECTS,
 };
 use diesel_async::pooled_connection::deadpool::Pool;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
@@ -75,12 +75,23 @@ async fn main() -> anyhow::Result<()> {
     let funding = FundingConfig::from_env();
     info!(?funding.mode, seed = funding.seed_bankroll_usdc, "funding");
 
+    let rain = funding.rain.as_ref().map(|cfg| {
+        info!(base = %cfg.api_base_url, "rain client ready (testnet)");
+        client_from_config(cfg)
+    });
+    if funding.mode == backend::FundingMode::Testnet && rain.is_none() {
+        warn!("FUNDING_MODE=testnet but RAIN_* / PLATFORM_SIGNER_ADDRESS incomplete — Rain routes unavailable");
+    }
+
     let app = router(AppState {
         pool,
         auth: AuthStore::new(),
         funding,
         chain,
         nats,
+        rain,
+        pending_funding: PendingFundingStore::new(),
+        settle_poll: None,
     });
 
     transport::mark_ready();

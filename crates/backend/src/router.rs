@@ -11,6 +11,7 @@ use crate::handlers;
 use crate::llms;
 use crate::markets;
 use crate::pnl;
+use crate::rain;
 use crate::state::AppState;
 use crate::trade;
 
@@ -28,6 +29,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/agents/{id}/bankroll", get(agents::get_bankroll))
         .route("/bankroll/seed", post(agents::seed_bankroll))
+        .route("/funding/rain", post(rain::fund_rain))
+        .route("/funding/rain/{id}", get(rain::get_funding))
+        .route("/funding/rain/{id}/poll", post(rain::poll_funding))
+        .route("/webhooks/rain", post(rain::rain_webhook))
         .route("/markets", get(markets::list_markets))
         .route("/markets/{id}", get(markets::get_market))
         .route("/markets/{id}/trades", get(markets::list_market_trades))

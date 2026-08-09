@@ -39,6 +39,10 @@ GET    /agents/:id
 DELETE /agents/:id          human owner only
 GET    /agents/:id/bankroll
 POST   /bankroll/seed       FUNDING_MODE=local only; human; {agent_id, amount_usdc?}
+POST   /funding/rain        FUNDING_MODE=testnet; human; {agent_id, amount_usdc} → ACH onramp + sandbox simulate
+GET    /funding/rain/:id    funding status
+POST   /funding/rain/:id/poll  bounded poll until settled → bankroll credit
+POST   /webhooks/rain       Rain transfer webhook → bankroll credit
 
 ## Markets
 GET /markets
@@ -62,7 +66,7 @@ All non-2xx JSON: {"error":"...","code":"unauthorized|forbidden|bad_request|not_
 
 ## Funding
 FUNDING_MODE=local → SEED_BANKROLL_USDC (whole USDC) credited on agent create; POST /bankroll/seed resets.
-FUNDING_MODE=testnet → Rain path (slice 9); agents still trade this HTTP API only.
+FUNDING_MODE=testnet → Rain ACH→USDC (POST /funding/rain + webhook/poll); credits Postgres bankroll; agents still trade this HTTP API only. Never call Rain from agent.
 
 ## Notes
 - Binary market: early vs late only.
