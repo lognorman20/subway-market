@@ -53,6 +53,28 @@ pub struct RainConfig {
     pub destination_rail: String,
 }
 
+/// True when Rain API base looks like sandbox/dev (not production).
+pub fn is_rain_sandbox_api_url(api_base_url: &str) -> bool {
+    let lower = api_base_url.to_ascii_lowercase();
+    lower.contains("api-dev.raincards")
+        || lower.contains("sandbox")
+        || lower.contains("rain-sandbox")
+}
+
+/// Resolve sandbox credit-on-simulate:
+/// - `RAIN_SANDBOX_CREDIT_ON_SIMULATE=0|false|no` → off
+/// - `=1|true|yes` → on
+/// - unset → on when `api_base_url` is sandbox/dev, else off
+pub fn resolve_sandbox_credit_on_simulate(api_base_url: &str) -> bool {
+    match env::var("RAIN_SANDBOX_CREDIT_ON_SIMULATE") {
+        Ok(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            matches!(v.as_str(), "1" | "true" | "yes" | "on")
+        }
+        Err(_) => is_rain_sandbox_api_url(api_base_url),
+    }
+}
+
 impl RainConfig {
     /// `None` when mode is local or required `RAIN_*` missing.
     pub fn from_env_if_testnet(mode: FundingMode) -> Option<Self> {
@@ -117,6 +139,9 @@ pub struct FundingConfig {
     pub seed_bankroll_usdc: i64,
     /// Present only for testnet when `RAIN_*` (+ destination) set.
     pub rain: Option<RainConfig>,
+    /// Sandbox-only: credit bankroll immediately after Rain ACH simulate succeeds
+    /// (interim — not real ACH finality). Later webhook/poll must not double-credit.
+    pub sandbox_credit_on_simulate: bool,
 }
 
 impl FundingConfig {
@@ -127,10 +152,15 @@ impl FundingConfig {
             .and_then(|v| v.parse::<i64>().ok())
             .unwrap_or(1000);
         let rain = RainConfig::from_env_if_testnet(mode);
+        let sandbox_credit_on_simulate = rain
+            .as_ref()
+            .map(|r| resolve_sandbox_credit_on_simulate(&r.api_base_url))
+            .unwrap_or(false);
         Self {
             mode,
             seed_bankroll_usdc: whole.saturating_mul(USDC_DECIMALS),
             rain,
+            sandbox_credit_on_simulate,
         }
     }
 
@@ -209,5 +239,32 @@ mod tests {
         env::remove_var("RAIN_USER_ID");
         env::remove_var("PLATFORM_SIGNER_ADDRESS");
         env::remove_var("FUNDING_MODE");
+    }
+
+    #[test]
+    fn sandbox_url_detected() {
+        assert!(is_rain_sandbox_api_url("https://api-dev.raincards.xyz/v1"));
+        assert!(!is_rain_sandbox_api_url("https://api.raincards.xyz/v1"));
+    }
+
+    #[test]
+    fn credit_on_simulate_env_overrides() {
+        let _g = ENV_LOCK.lock().unwrap();
+        env::remove_var("RAIN_SANDBOX_CREDIT_ON_SIMULATE");
+        assert!(resolve_sandbox_credit_on_simulate(
+            "https://api-dev.raincards.xyz/v1"
+        ));
+        assert!(!resolve_sandbox_credit_on_simulate(
+            "https://api.raincards.xyz/v1"
+        ));
+        env::set_var("RAIN_SANDBOX_CREDIT_ON_SIMULATE", "0");
+        assert!(!resolve_sandbox_credit_on_simulate(
+            "https://api-dev.raincards.xyz/v1"
+        ));
+        env::set_var("RAIN_SANDBOX_CREDIT_ON_SIMULATE", "1");
+        assert!(resolve_sandbox_credit_on_simulate(
+            "https://api.raincards.xyz/v1"
+        ));
+        env::remove_var("RAIN_SANDBOX_CREDIT_ON_SIMULATE");
     }
 }

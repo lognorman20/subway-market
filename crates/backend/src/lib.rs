@@ -22,8 +22,8 @@ pub mod trading_chain;
 pub use auth::AuthStore;
 pub use error::ApiError;
 pub use funding::{
-    FundingConfig, FundingMode, RainConfig, MONAD_TESTNET_CHAIN_ID, MONAD_TESTNET_USDC,
-    RAIN_SANDBOX_COMPLIANT_DEST_EXAMPLE,
+    is_rain_sandbox_api_url, resolve_sandbox_credit_on_simulate, FundingConfig, FundingMode,
+    RainConfig, MONAD_TESTNET_CHAIN_ID, MONAD_TESTNET_USDC, RAIN_SANDBOX_COMPLIANT_DEST_EXAMPLE,
 };
 pub use lifecycle::{LifecycleHandler, LIFECYCLE_SUBJECTS};
 pub use rain::{

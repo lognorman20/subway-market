@@ -219,6 +219,13 @@ async fn setup_mocks(server: &MockServer, route_id: &str, tx_id: &str) {
 }
 
 async fn testnet_app(server: &MockServer) -> (axum::Router, Arc<MockTradingChain>) {
+    testnet_app_with_credit_on_simulate(server, false).await
+}
+
+async fn testnet_app_with_credit_on_simulate(
+    server: &MockServer,
+    sandbox_credit_on_simulate: bool,
+) -> (axum::Router, Arc<MockTradingChain>) {
     let cfg = rain_cfg(&server.uri());
     let client = Arc::new(HttpRainClient::new(cfg.clone())) as Arc<dyn RainApi>;
     let chain = Arc::new(MockTradingChain::balanced());
@@ -229,6 +236,7 @@ async fn testnet_app(server: &MockServer) -> (axum::Router, Arc<MockTradingChain
             mode: FundingMode::Testnet,
             seed_bankroll_usdc: 0,
             rain: Some(cfg),
+            sandbox_credit_on_simulate,
         },
         chain: Some(chain.clone() as Arc<dyn backend::TradingChain>),
         nats: None,
@@ -452,6 +460,7 @@ async fn local_mode_rejects_rain_fund() {
             mode: FundingMode::Local,
             seed_bankroll_usdc: 1_000_000,
             rain: None,
+            sandbox_credit_on_simulate: false,
         },
         chain: None,
         nats: None,
@@ -688,6 +697,173 @@ async fn concurrent_webhook_settle_credits_once() {
         chain.treasury_mirror_call_count(),
         1,
         "treasury mirror once despite concurrent webhooks"
+    );
+}
+
+#[tokio::test]
+async fn simulate_credit_on_flag_credits_once_webhook_no_double() {
+    let server = MockServer::start().await;
+    let route_id = "a9b2c3d4-e5f6-7890-abcd-ef1234567890";
+    let tx_id = "b9c3d4e5-f6a7-8901-bcde-f12345678901";
+    setup_mocks(&server, route_id, tx_id).await;
+
+    let (app, chain) = testnet_app_with_credit_on_simulate(&server, true).await;
+    let session = human_session(&app).await;
+    let agent = create_agent(&app, &session).await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/funding/rain")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "agent_id": agent.agent_id.as_ref(),
+                        "amount_usdc": 100
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let fund_body = json_body(res).await;
+    assert_eq!(status, StatusCode::OK, "{fund_body}");
+    assert_eq!(
+        fund_body["status"], "settled",
+        "credit-on-simulate marks settled"
+    );
+    assert_eq!(fund_body["bankroll_usdc"], 100_000_000);
+    assert!(
+        fund_body["credit_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("NOT real ACH finality"),
+        "must label sandbox interim: {fund_body}"
+    );
+    assert_eq!(chain.treasury_mirror_call_count(), 1);
+    let funding_id = fund_body["funding_id"].as_str().unwrap().to_string();
+
+    // Subsequent real webhook settle must not double-credit.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/webhooks/rain")
+                .header("content-type", "application/json")
+                .header("Api-Key", "test-rain-key")
+                .body(settle_webhook_body(tx_id))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let wh_body = json_body(res).await;
+    assert_eq!(status, StatusCode::OK, "{wh_body}");
+    assert_eq!(wh_body["handled"], true);
+    assert_eq!(wh_body["bankroll_usdc"], 100_000_000);
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/agents/{}/bankroll", agent.agent_id.as_ref()))
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let br = json_body(res).await;
+    assert_eq!(
+        br["available_usdc"], 100_000_000,
+        "webhook after credit-on-simulate must not double-credit"
+    );
+    assert_eq!(
+        chain.treasury_mirror_call_count(),
+        1,
+        "treasury mirror once"
+    );
+
+    // Poll also idempotent.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/funding/rain/{funding_id}/poll"))
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let poll_body = json_body(res).await;
+    assert_eq!(status, StatusCode::OK, "{poll_body}");
+    assert_eq!(poll_body["bankroll_usdc"], 100_000_000);
+    assert_eq!(chain.treasury_mirror_call_count(), 1);
+}
+
+#[tokio::test]
+async fn flag_off_simulate_alone_does_not_credit() {
+    let server = MockServer::start().await;
+    let route_id = "c9b2c3d4-e5f6-7890-abcd-ef1234567890";
+    let tx_id = "d9c3d4e5-f6a7-8901-bcde-f12345678901";
+    setup_mocks(&server, route_id, tx_id).await;
+
+    let (app, chain) = testnet_app_with_credit_on_simulate(&server, false).await;
+    let session = human_session(&app).await;
+    let agent = create_agent(&app, &session).await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/funding/rain")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "agent_id": agent.agent_id.as_ref(),
+                        "amount_usdc": 100
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let body = json_body(res).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "pending");
+    assert!(body.get("bankroll_usdc").is_none() || body["bankroll_usdc"].is_null());
+    assert_eq!(chain.treasury_mirror_call_count(), 0);
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/agents/{}/bankroll", agent.agent_id.as_ref()))
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let br = json_body(res).await;
+    assert_eq!(
+        br["available_usdc"], 0,
+        "flag off: simulate alone must not credit"
     );
 }
 

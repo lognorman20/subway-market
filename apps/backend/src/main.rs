@@ -73,7 +73,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let funding = FundingConfig::from_env();
-    info!(?funding.mode, seed = funding.seed_bankroll_usdc, "funding");
+    info!(
+        ?funding.mode,
+        seed = funding.seed_bankroll_usdc,
+        sandbox_credit_on_simulate = funding.sandbox_credit_on_simulate,
+        "funding"
+    );
 
     let rain = funding.rain.as_ref().map(|cfg| {
         info!(base = %cfg.api_base_url, "rain client ready (testnet)");

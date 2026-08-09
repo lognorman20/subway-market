@@ -39,6 +39,7 @@ fn funding_local() -> FundingConfig {
         mode: FundingMode::Local,
         seed_bankroll_usdc: 1_000 * 1_000_000,
         rain: None,
+        sandbox_credit_on_simulate: false,
     }
 }
 

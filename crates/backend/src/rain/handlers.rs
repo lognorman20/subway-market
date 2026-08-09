@@ -38,6 +38,12 @@ pub struct FundRainResponse {
     pub amount_micro: i64,
     pub status: FundingStatus,
     pub deposit_address: Option<serde_json::Value>,
+    /// Present when sandbox credit-on-simulate credited immediately.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bankroll_usdc: Option<i64>,
+    /// Sandbox interim label when credit-on-simulate ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credit_note: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -118,12 +124,41 @@ pub async fn fund_rain(
     };
     state.pending_funding.insert(pending).await;
 
+    let mut status = FundingStatus::Pending;
+    let mut bankroll_usdc = None;
+    let mut credit_note = None;
+
+    // Sandbox-only interim: credit after simulate so agent leg is not blocked on
+    // transfers stuck in `processing`. NOT real ACH finality — webhook/poll later
+    // must not double-credit (apply_settlement is idempotent via Settled + credited_tx).
+    if state.funding.sandbox_credit_on_simulate {
+        let synthetic_tx = format!(
+            "sandbox-sim:{}",
+            simulation_id.as_deref().unwrap_or(funding_id.as_str())
+        );
+        let bankroll =
+            apply_settlement(&state, &funding_id, &synthetic_tx, amount_micro).await?;
+        status = FundingStatus::Settled;
+        bankroll_usdc = Some(bankroll);
+        credit_note = Some(
+            "sandbox interim credit-on-simulate — NOT real ACH finality".into(),
+        );
+        info!(
+            %funding_id,
+            amount_micro,
+            bankroll,
+            "sandbox interim credit-on-simulate — bankroll credited (NOT real ACH finality)"
+        );
+    }
+
     info!(
         %funding_id,
         route_id = %route.id,
         simulation_id = ?simulation_id,
         success = ?sim.success,
         amount = req.amount_usdc,
+        ?status,
+        sandbox_credit_on_simulate = state.funding.sandbox_credit_on_simulate,
         "rain funding initiated"
     );
 
@@ -133,8 +168,10 @@ pub async fn fund_rain(
         simulation_id,
         amount_usdc: req.amount_usdc,
         amount_micro,
-        status: FundingStatus::Pending,
+        status,
         deposit_address: route.deposit_address,
+        bankroll_usdc,
+        credit_note,
     }))
 }
 
@@ -355,12 +392,12 @@ async fn match_pending(
     parsed: &ParsedWebhook,
 ) -> Option<PendingFunding> {
     if let Some(sim) = parsed.simulation_id.as_deref() {
-        if let Some(f) = store.find_pending_by_simulation(sim).await {
+        if let Some(f) = store.find_by_simulation(sim).await {
             return Some(f);
         }
     }
     if let Some(micro) = parsed.amount_micro {
-        if let Some(f) = store.find_pending_by_amount(micro).await {
+        if let Some(f) = store.find_by_amount(micro).await {
             return Some(f);
         }
     }
@@ -448,6 +485,7 @@ async fn apply_settlement(
         agent_id = %funding.agent_id,
         amount_micro,
         bankroll,
+        sandbox_interim = rain_tx_id.starts_with("sandbox-sim:"),
         "rain funding settled — bankroll credited (+ interim treasury mirror attempted)"
     );
 

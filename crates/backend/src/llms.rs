@@ -40,9 +40,12 @@ DELETE /agents/:id          human owner only
 GET    /agents/:id/bankroll
 POST   /bankroll/seed       FUNDING_MODE=local only; human; {agent_id, amount_usdc?}
 POST   /funding/rain        FUNDING_MODE=testnet; human; {agent_id, amount_usdc} → ACH onramp + sandbox simulate
+                            When RAIN_SANDBOX_CREDIT_ON_SIMULATE (default on for api-dev sandbox): credits
+                            bankroll immediately after simulate — sandbox interim, NOT real ACH finality.
+                            Later webhook/poll settle is idempotent (no double credit).
 GET    /funding/rain/:id    funding status
-POST   /funding/rain/:id/poll  bounded poll until settled → bankroll credit
-POST   /webhooks/rain       Rain transfer webhook → bankroll credit
+POST   /funding/rain/:id/poll  bounded poll until settled → bankroll credit (no-op if already credited)
+POST   /webhooks/rain       Rain transfer webhook → bankroll credit (idempotent)
 
 ## Markets
 GET /markets
@@ -70,6 +73,8 @@ FUNDING_MODE=testnet → Rain ACH→USDC on Base (POST /funding/rain + webhook/p
   + interim treasury mirror (MockUSDC 1:1 to platform on Monad/anvil for LMSR). Rain has no Monad rail —
   mirror is NOT a real bridge. Agents trade this HTTP API only. Never call Rain from agent.
   Set RAIN_DESTINATION_ADDRESS (compliant Base addr; not anvil #0).
+  Sandbox interim: RAIN_SANDBOX_CREDIT_ON_SIMULATE (default on for api-dev.*) credits bankroll right after
+  simulate success so agents can trade while Rain transfer stays processing — NOT real ACH finality.
 
 ## Notes
 - Binary market: early vs late only.

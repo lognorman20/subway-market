@@ -90,6 +90,39 @@ impl PendingFundingStore {
             .cloned()
     }
 
+    /// Pending first, else settled — for idempotent webhook after credit-on-simulate.
+    pub async fn find_by_simulation(&self, simulation_id: &str) -> Option<PendingFunding> {
+        if let Some(f) = self.find_pending_by_simulation(simulation_id).await {
+            return Some(f);
+        }
+        let guard = self.inner.read().await;
+        let mut matches: Vec<_> = guard
+            .values()
+            .filter(|f| {
+                f.status == FundingStatus::Settled
+                    && f.simulation_id.as_deref() == Some(simulation_id)
+            })
+            .cloned()
+            .collect();
+        matches.sort_by_key(|f| f.created_at);
+        matches.into_iter().next()
+    }
+
+    /// Pending first, else settled by amount (FIFO) — idempotent webhook match.
+    pub async fn find_by_amount(&self, amount_micro: i64) -> Option<PendingFunding> {
+        if let Some(f) = self.find_pending_by_amount(amount_micro).await {
+            return Some(f);
+        }
+        let guard = self.inner.read().await;
+        let mut matches: Vec<_> = guard
+            .values()
+            .filter(|f| f.status == FundingStatus::Settled && f.amount_micro == amount_micro)
+            .cloned()
+            .collect();
+        matches.sort_by_key(|f| f.created_at);
+        matches.into_iter().next()
+    }
+
     /// Returns true if this rain_tx_id was already credited.
     pub async fn already_credited(&self, rain_tx_id: &str) -> bool {
         self.credited_tx.read().await.contains_key(rain_tx_id)
