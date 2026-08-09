@@ -1,4 +1,4 @@
-//! Observe lane — read-only TUI over `tracked_trains`.
+//! Observe lane — read-only TUI over ledger Postgres (trains + trades).
 
 pub mod format;
 pub mod queries;

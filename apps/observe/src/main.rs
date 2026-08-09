@@ -1,4 +1,4 @@
-//! Observe binary — read-only TUI over ledger Postgres.
+//! Observe binary — read-only TUI (trains, markets, trades, PnL).
 
 use anyhow::Context;
 use diesel_async::pooled_connection::deadpool::Pool;
