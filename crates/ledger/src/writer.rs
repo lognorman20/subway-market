@@ -18,6 +18,8 @@ pub enum WriterError {
     Json(#[from] serde_json::Error),
     #[error("pool: {0}")]
     Pool(String),
+    #[error("projection: {0}")]
+    Projection(String),
 }
 
 pub type DbPool = Pool<AsyncPgConnection>;

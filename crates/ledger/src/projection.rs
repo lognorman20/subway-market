@@ -6,6 +6,9 @@ use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use dto::{remaining_stops_to_target, BusEvent, DiffEvent, FreezeEvent, TrainPhase, TripSnapshot};
 use tracing::{debug, info};
 
+use crate::trade_projection::{
+    project_market_opened, project_market_resolved, project_trade_filled,
+};
 use crate::writer::WriterError;
 
 /// Frozen rows with `expected_arrival_unix` older than this many seconds are deleted.
@@ -131,6 +134,9 @@ pub async fn project_event(
         BusEvent::Trip(trip) => project_trip_snapshot(conn, trip).await?,
         BusEvent::Freeze(freeze) => project_freeze(conn, freeze).await?,
         BusEvent::Diff(diff) => project_diff(conn, diff).await?,
+        BusEvent::MarketOpened(opened) => project_market_opened(conn, opened).await?,
+        BusEvent::MarketResolved(resolved) => project_market_resolved(conn, resolved).await?,
+        BusEvent::TradeFilled(fill) => project_trade_filled(conn, fill).await?,
         other => {
             debug!(
                 event_id = %other.event_id().as_ref(),

@@ -1,4 +1,4 @@
-//! Ledger binary — subscribe subway.> → Postgres (trains only).
+//! Ledger binary — subscribe subway.> → Postgres (trains + trade/PnL projections).
 
 use std::sync::Arc;
 

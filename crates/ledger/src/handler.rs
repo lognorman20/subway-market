@@ -55,6 +55,31 @@ impl EventHandler for LedgerHandler {
                     "diff recorded"
                 );
             }
+            BusEvent::MarketOpened(opened) => {
+                debug!(
+                    event_id = %opened.meta.event_id.as_ref(),
+                    market_id = %opened.market_id.as_ref(),
+                    "market opened recorded"
+                );
+            }
+            BusEvent::MarketResolved(resolved) => {
+                debug!(
+                    event_id = %resolved.meta.event_id.as_ref(),
+                    market_id = %resolved.market_id.as_ref(),
+                    outcome = %resolved.outcome.as_str(),
+                    "market resolved recorded"
+                );
+            }
+            BusEvent::TradeFilled(fill) => {
+                debug!(
+                    event_id = %fill.meta.event_id.as_ref(),
+                    trade_id = %fill.trade_id.as_ref(),
+                    market_id = %fill.market_id.as_ref(),
+                    agent_id = %fill.agent_id.as_ref(),
+                    action = %fill.action.as_str(),
+                    "trade filled recorded"
+                );
+            }
             _ => {}
         }
 
