@@ -246,39 +246,72 @@ pub(crate) async fn load_bankroll(
     row.ok_or_else(|| ApiError::NotFound(format!("agent {aid} not found")))
 }
 
-pub(crate) async fn adjust_bankroll(
+/// Debit bankroll under `SELECT … FOR UPDATE` (commits before chain).
+pub(crate) async fn debit_bankroll_locked(
+    state: &AppState,
+    aid: &str,
+    amount: i64,
+) -> Result<i64, ApiError> {
+    if amount < 0 {
+        return Err(ApiError::Internal("debit amount must be >= 0".into()));
+    }
+    adjust_bankroll_locked(state, aid, -amount).await
+}
+
+/// Credit bankroll under `SELECT … FOR UPDATE`.
+pub(crate) async fn credit_bankroll_locked(
+    state: &AppState,
+    aid: &str,
+    amount: i64,
+) -> Result<i64, ApiError> {
+    if amount < 0 {
+        return Err(ApiError::Internal("credit amount must be >= 0".into()));
+    }
+    adjust_bankroll_locked(state, aid, amount).await
+}
+
+async fn adjust_bankroll_locked(
     state: &AppState,
     aid: &str,
     delta: i64,
 ) -> Result<i64, ApiError> {
     use db::schema::agents::dsl::*;
+    use diesel_async::AsyncConnection;
+
     let mut conn = state
         .pool
         .get()
         .await
         .map_err(|e| ApiError::Internal(format!("pool get: {e}")))?;
 
-    let current: i64 = agents
-        .filter(agent_id.eq(aid))
-        .select(bankroll_usdc)
-        .first(&mut conn)
-        .await
-        .optional()?
-        .ok_or_else(|| ApiError::NotFound(format!("agent {aid} not found")))?;
+    let aid = aid.to_string();
+    conn.transaction(|conn| {
+        Box::pin(async move {
+            let current: i64 = agents
+                .filter(agent_id.eq(&aid))
+                .select(bankroll_usdc)
+                .for_update()
+                .first(conn)
+                .await
+                .optional()?
+                .ok_or_else(|| ApiError::NotFound(format!("agent {aid} not found")))?;
 
-    let next = current.checked_add(delta).ok_or_else(|| {
-        ApiError::Internal("bankroll overflow".into())
-    })?;
-    if next < 0 {
-        return Err(ApiError::InsufficientBankroll);
-    }
+            let next = current
+                .checked_add(delta)
+                .ok_or_else(|| ApiError::Internal("bankroll overflow".into()))?;
+            if next < 0 {
+                return Err(ApiError::InsufficientBankroll);
+            }
 
-    diesel::update(agents.filter(agent_id.eq(aid)))
-        .set(bankroll_usdc.eq(next))
-        .execute(&mut conn)
-        .await?;
+            diesel::update(agents.filter(agent_id.eq(&aid)))
+                .set(bankroll_usdc.eq(next))
+                .execute(conn)
+                .await?;
 
-    Ok(next)
+            Ok(next)
+        })
+    })
+    .await
 }
 
 fn ensure_can_view(identity: &AuthIdentity, aid: &str, owner: &str) -> Result<(), ApiError> {

@@ -30,13 +30,17 @@ async fn main() -> anyhow::Result<()> {
         .context("build postgres pool")?;
     info!("postgres connected");
 
+    // Boot continues without NATS (health/reads ok); buy/sell return 503 until bus is up.
     let nats = match transport::connect(&nats_url).await {
         Ok(client) => {
             info!(%nats_url, "nats connected");
             Some(client)
         }
         Err(err) => {
-            warn!(error = %err, "nats unavailable — trade emit will fail until connected");
+            warn!(
+                error = %err,
+                "nats unavailable — buy/sell disabled (503) until bus connects"
+            );
             None
         }
     };

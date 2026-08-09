@@ -170,7 +170,10 @@ pub struct MockTradingChain {
     pub sell_proceeds: u128,
     pub price_early_wad: String,
     pub price_late_wad: String,
-    pub fail: bool,
+    /// Fail `buy`/`sell` txs (quotes still succeed).
+    pub fail_tx: std::sync::atomic::AtomicBool,
+    pub buy_calls: std::sync::atomic::AtomicUsize,
+    pub sell_calls: std::sync::atomic::AtomicUsize,
 }
 
 impl MockTradingChain {
@@ -180,24 +183,38 @@ impl MockTradingChain {
             sell_proceeds: 500_000,
             price_early_wad: "500000000000000000".into(),
             price_late_wad: "500000000000000000".into(),
-            fail: false,
+            fail_tx: std::sync::atomic::AtomicBool::new(false),
+            buy_calls: std::sync::atomic::AtomicUsize::new(0),
+            sell_calls: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    pub fn buy_call_count(&self) -> usize {
+        self.buy_calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn sell_call_count(&self) -> usize {
+        self.sell_calls.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
 #[async_trait]
 impl TradingChain for MockTradingChain {
-    async fn quote_buy(&self, _market_id: u64, _side: MarketSide, _shares: u128) -> Result<u128, ApiError> {
-        if self.fail {
-            return Err(ApiError::Internal("mock chain fail".into()));
-        }
+    async fn quote_buy(
+        &self,
+        _market_id: u64,
+        _side: MarketSide,
+        _shares: u128,
+    ) -> Result<u128, ApiError> {
         Ok(self.buy_cost)
     }
 
-    async fn quote_sell(&self, _market_id: u64, _side: MarketSide, _shares: u128) -> Result<u128, ApiError> {
-        if self.fail {
-            return Err(ApiError::Internal("mock chain fail".into()));
-        }
+    async fn quote_sell(
+        &self,
+        _market_id: u64,
+        _side: MarketSide,
+        _shares: u128,
+    ) -> Result<u128, ApiError> {
         Ok(self.sell_proceeds)
     }
 
@@ -208,7 +225,9 @@ impl TradingChain for MockTradingChain {
         _side: MarketSide,
         _shares: u128,
     ) -> Result<String, ApiError> {
-        if self.fail {
+        self.buy_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.fail_tx.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(ApiError::Internal("mock chain fail".into()));
         }
         Ok(format!("0x{}", hex::encode(B256::repeat_byte(0xab))))
@@ -221,7 +240,9 @@ impl TradingChain for MockTradingChain {
         _side: MarketSide,
         _shares: u128,
     ) -> Result<String, ApiError> {
-        if self.fail {
+        self.sell_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.fail_tx.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(ApiError::Internal("mock chain fail".into()));
         }
         Ok(format!("0x{}", hex::encode(B256::repeat_byte(0xcd))))

@@ -42,3 +42,4 @@ diesel = { workspace = true }
 diesel-async = { workspace = true }
 dto = { workspace = true }
 db = { workspace = true }
+transport = { workspace = true }

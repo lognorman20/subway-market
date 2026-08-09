@@ -1,4 +1,6 @@
-//! Buy/sell — validate bankroll, chain tx (platform signer), emit `subway.trade.filled`.
+//! Buy/sell — debit bankroll first, chain tx, mandatory `subway.trade.filled` emit.
+
+use std::time::Duration;
 
 use axum::{extract::State, Json};
 use chrono::Utc;
@@ -6,16 +8,22 @@ use dto::{
     AgentId, BusEvent, BuyRequest, EventMeta, MarketId, MarketOutcome, SellRequest, Trade,
     TradeAction, TradeFilled, TradeId, TradeResponse, TRADE_FILLED,
 };
-use tracing::{info, warn};
+use tracing::{error, warn};
+use transport::TransportClient;
 
 use crate::agents::{
-    adjust_bankroll, ensure_human_owns_agent, load_bankroll, resolve_trading_agent,
+    credit_bankroll_locked, debit_bankroll_locked, ensure_human_owns_agent, resolve_trading_agent,
 };
 use crate::auth::{AuthIdentity, AuthUser};
 use crate::error::ApiError;
 use crate::markets::load_market;
 use crate::state::AppState;
 use crate::trading_chain::{agent_custody_address, parse_market_id, parse_shares};
+
+/// Bounded emit retries after chain success (decision #10 — ledger must see fill).
+const EMIT_ATTEMPTS: u32 = 5;
+const EMIT_BACKOFF_BASE_MS: u64 = 50;
+const EMIT_BACKOFF_CAP_MS: u64 = 800;
 
 pub async fn buy(
     State(state): State<AppState>,
@@ -52,6 +60,9 @@ async fn execute_trade(
     requested_agent: Option<AgentId>,
     action: TradeAction,
 ) -> Result<Json<TradeResponse>, ApiError> {
+    let nats = state.nats.as_ref().ok_or_else(|| {
+        ApiError::Unavailable("nats unavailable — trading disabled until bus connects".into())
+    })?;
     let chain = state
         .chain
         .as_ref()
@@ -78,13 +89,7 @@ async fn execute_trade(
     let usdc_amount = match action {
         TradeAction::Buy => {
             let cost = chain.quote_buy(mid, side, shares).await?;
-            let cost_i = i64::try_from(cost)
-                .map_err(|_| ApiError::Internal("cost exceeds i64".into()))?;
-            let (bankroll, _) = load_bankroll(&state, &agent_id).await?;
-            if bankroll < cost_i {
-                return Err(ApiError::InsufficientBankroll);
-            }
-            cost_i
+            i64::try_from(cost).map_err(|_| ApiError::Internal("cost exceeds i64".into()))?
         }
         TradeAction::Sell => {
             let proceeds = chain.quote_sell(mid, side, shares).await?;
@@ -92,22 +97,40 @@ async fn execute_trade(
         }
     };
 
+    // Buy: reserve/debit BEFORE chain (FOR UPDATE). Sell: credit AFTER chain success.
+    if matches!(action, TradeAction::Buy) {
+        debit_bankroll_locked(&state, &agent_id, usdc_amount).await?;
+    }
+
     let tx_hash = match action {
-        TradeAction::Buy => chain.buy(mid, account, side, shares).await?,
+        TradeAction::Buy => match chain.buy(mid, account, side, shares).await {
+            Ok(h) => h,
+            Err(err) => {
+                if let Err(restore_err) =
+                    credit_bankroll_locked(&state, &agent_id, usdc_amount).await
+                {
+                    error!(
+                        agent_id = %agent_id,
+                        usdc_amount,
+                        error = %restore_err.message(),
+                        "CRITICAL: chain buy failed and bankroll credit-back failed"
+                    );
+                }
+                return Err(err);
+            }
+        },
         TradeAction::Sell => chain.sell(mid, account, side, shares).await?,
     };
 
-    // Debit on buy, credit on sell.
-    let delta = match action {
-        TradeAction::Buy => -usdc_amount,
-        TradeAction::Sell => usdc_amount,
-    };
-    adjust_bankroll(&state, &agent_id, delta).await?;
+    if matches!(action, TradeAction::Sell) {
+        credit_bankroll_locked(&state, &agent_id, usdc_amount).await?;
+    }
 
     let price_wad = match side {
-        dto::MarketSide::Early => chain.price_early(mid).await.unwrap_or_else(|_| {
-            "500000000000000000".into()
-        }),
+        dto::MarketSide::Early => chain
+            .price_early(mid)
+            .await
+            .unwrap_or_else(|_| "500000000000000000".into()),
         dto::MarketSide::Late => chain
             .price_late(mid)
             .await
@@ -131,15 +154,7 @@ async fn execute_trade(
         filled_at,
     };
 
-    if let Some(nats) = &state.nats {
-        let event = BusEvent::TradeFilled(fill.clone());
-        if let Err(err) = nats.emit(TRADE_FILLED, &event).await {
-            warn!(error = %err, "failed to emit trade.filled");
-            return Err(ApiError::Internal(format!("emit trade.filled: {err}")));
-        }
-    } else {
-        info!("nats absent — skipping trade.filled emit");
-    }
+    emit_trade_filled(nats, &fill).await?;
 
     let trade = Trade {
         trade_id,
@@ -156,4 +171,40 @@ async fn execute_trade(
     };
 
     Ok(Json(TradeResponse { trade }))
+}
+
+async fn emit_trade_filled(nats: &TransportClient, fill: &TradeFilled) -> Result<(), ApiError> {
+    let event = BusEvent::TradeFilled(fill.clone());
+    let mut last_err = String::new();
+
+    for attempt in 0..EMIT_ATTEMPTS {
+        match nats.emit(TRADE_FILLED, &event).await {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                last_err = err.to_string();
+                warn!(
+                    attempt = attempt + 1,
+                    max = EMIT_ATTEMPTS,
+                    error = %last_err,
+                    "trade.filled emit failed — retrying"
+                );
+                if attempt + 1 < EMIT_ATTEMPTS {
+                    let backoff_ms = (EMIT_BACKOFF_BASE_MS << attempt).min(EMIT_BACKOFF_CAP_MS);
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                }
+            }
+        }
+    }
+
+    let payload = serde_json::to_string(&event).unwrap_or_else(|_| "<serialize failed>".into());
+    error!(
+        error = %last_err,
+        attempts = EMIT_ATTEMPTS,
+        subject = TRADE_FILLED,
+        event_payload = %payload,
+        "CRITICAL: trade.filled emit exhausted after chain success — ledger will miss fill; replay payload"
+    );
+    Err(ApiError::Internal(format!(
+        "emit trade.filled failed after {EMIT_ATTEMPTS} attempts: {last_err}"
+    )))
 }

@@ -51,6 +51,59 @@ async fn app_state(chain: Option<Arc<dyn backend::TradingChain>>) -> AppState {
     }
 }
 
+async fn connect_nats() -> transport::TransportClient {
+    let url = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4223".into());
+    transport::connect(&url)
+        .await
+        .unwrap_or_else(|e| panic!("NATS required for trade tests at {url}: {e}"))
+}
+
+async fn app_state_with_nats(chain: Option<Arc<dyn backend::TradingChain>>) -> AppState {
+    AppState {
+        pool: pool().await,
+        auth: AuthStore::new(),
+        funding: funding_local(),
+        chain,
+        nats: Some(connect_nats().await),
+    }
+}
+
+async fn create_agent_via_http(app: &axum::Router, session: &str) -> CreateAgentResponse {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agents")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from(serde_json::to_vec(&json!({})).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    serde_json::from_value(json_body(res).await).unwrap()
+}
+
+async fn get_bankroll(app: &axum::Router, api_key: &str, agent_id: &str) -> i64 {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/agents/{agent_id}/bankroll"))
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bankroll: BankrollResponse = serde_json::from_value(json_body(res).await).unwrap();
+    bankroll.available_usdc
+}
+
 async fn json_body(res: axum::response::Response) -> serde_json::Value {
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes)
@@ -240,28 +293,14 @@ async fn auth_accept_human_and_agent() {
 #[tokio::test]
 async fn buy_returns_trade_and_debits_bankroll() {
     let mock = Arc::new(MockTradingChain::balanced());
-    let state = app_state(Some(mock)).await;
+    let state = app_state_with_nats(Some(mock)).await;
     let pool = state.pool.clone();
     let market_id = format!("{}", (Uuid::new_v4().as_u128() % 1_000_000) + 1);
     seed_market(&pool, &market_id).await;
 
     let app = router(state);
     let (_signer, session) = human_session(&app).await;
-
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/agents")
-                .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {session}"))
-                .body(Body::from(serde_json::to_vec(&json!({})).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let created: CreateAgentResponse = serde_json::from_value(json_body(res).await).unwrap();
+    let created = create_agent_via_http(&app, &session).await;
 
     let res = app
         .clone()
@@ -291,20 +330,8 @@ async fn buy_returns_trade_and_debits_bankroll() {
     assert_eq!(trade.trade.usdc_amount, 500_000);
     assert_eq!(trade.trade.side, MarketSide::Early);
 
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri(format!("/agents/{}/bankroll", created.agent_id.as_ref()))
-                .header("authorization", format!("Bearer {}", created.api_key))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let bankroll: BankrollResponse = serde_json::from_value(json_body(res).await).unwrap();
-    assert_eq!(bankroll.available_usdc, 1_000_000_000 - 500_000);
+    let bankroll = get_bankroll(&app, &created.api_key, created.agent_id.as_ref()).await;
+    assert_eq!(bankroll, 1_000_000_000 - 500_000);
 
     let res = app
         .oneshot(
@@ -328,6 +355,132 @@ async fn buy_returns_trade_and_debits_bankroll() {
     let status = res.status();
     let body = json_body(res).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn buy_without_nats_returns_503() {
+    let mock = Arc::new(MockTradingChain::balanced());
+    let state = app_state(Some(mock.clone())).await;
+    let pool = state.pool.clone();
+    let market_id = format!("{}", (Uuid::new_v4().as_u128() % 1_000_000) + 10);
+    seed_market(&pool, &market_id).await;
+
+    let app = router(state);
+    let (_signer, session) = human_session(&app).await;
+    let created = create_agent_via_http(&app, &session).await;
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/buy")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", created.api_key))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "market_id": market_id,
+                        "side": "early",
+                        "shares": "1000000"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let body = json_body(res).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["code"], "unavailable");
+    assert_eq!(mock.buy_call_count(), 0);
+}
+
+#[tokio::test]
+async fn insufficient_bankroll_skips_chain_buy() {
+    let mock = Arc::new(MockTradingChain {
+        buy_cost: 9_999_999_999_999,
+        ..MockTradingChain::balanced()
+    });
+    let state = app_state_with_nats(Some(mock.clone())).await;
+    let pool = state.pool.clone();
+    let market_id = format!("{}", (Uuid::new_v4().as_u128() % 1_000_000) + 20);
+    seed_market(&pool, &market_id).await;
+
+    let app = router(state);
+    let (_signer, session) = human_session(&app).await;
+    let created = create_agent_via_http(&app, &session).await;
+    let before = get_bankroll(&app, &created.api_key, created.agent_id.as_ref()).await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/buy")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", created.api_key))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "market_id": market_id,
+                        "side": "early",
+                        "shares": "1000000"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let body = json_body(res).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "insufficient_bankroll");
+    assert_eq!(mock.buy_call_count(), 0);
+    let after = get_bankroll(&app, &created.api_key, created.agent_id.as_ref()).await;
+    assert_eq!(after, before);
+}
+
+#[tokio::test]
+async fn chain_fail_restores_bankroll() {
+    let mock = Arc::new(MockTradingChain::balanced());
+    mock.fail_tx
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let state = app_state_with_nats(Some(mock.clone())).await;
+    let pool = state.pool.clone();
+    let market_id = format!("{}", (Uuid::new_v4().as_u128() % 1_000_000) + 30);
+    seed_market(&pool, &market_id).await;
+
+    let app = router(state);
+    let (_signer, session) = human_session(&app).await;
+    let created = create_agent_via_http(&app, &session).await;
+    let before = get_bankroll(&app, &created.api_key, created.agent_id.as_ref()).await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/buy")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", created.api_key))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "market_id": market_id,
+                        "side": "early",
+                        "shares": "1000000"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let body = json_body(res).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(mock.buy_call_count(), 1);
+    let after = get_bankroll(&app, &created.api_key, created.agent_id.as_ref()).await;
+    assert_eq!(after, before, "bankroll must restore after chain fail");
 }
 
 #[tokio::test]
