@@ -1,4 +1,5 @@
-//! Local MockUSDC mint for platform signer (deploy-local does not seed balances).
+//! Local MockUSDC mint for platform signer.
+//! `just deploy-local` already seeds 1e6 USDC + approve; this top-up stays for long E2E runs / redeploys.
 
 use anyhow::{bail, Context, Result};
 use std::process::Command;

@@ -24,6 +24,10 @@ pub struct TripStore {
     /// Last scored target per trip. Survives trip removal so the next freeze
     /// waits until feed `remaining[0]` catches up (or drops that stop).
     last_arrived: HashMap<String, LastArrived>,
+    /// Dedupe key of the single in-flight market (open requested, not yet resolved).
+    pub active_market_dedupe: Option<String>,
+    /// Dedupe keys for which we emitted `market.open_requested` (resolve only these).
+    pub market_opened_dedupes: HashSet<String>,
 }
 
 impl TripStore {
@@ -108,7 +112,27 @@ impl TripStore {
         self.by_trip.keys()
     }
 
+    pub fn trips(&self) -> impl Iterator<Item = &TripState> {
+        self.by_trip.values()
+    }
+
     pub fn len(&self) -> usize {
         self.by_trip.len()
+    }
+
+    pub fn note_market_opened(&mut self, dedupe_key: impl Into<String>) {
+        let key = dedupe_key.into();
+        self.active_market_dedupe = Some(key.clone());
+        self.market_opened_dedupes.insert(key);
+    }
+
+    /// Clear active slot when the opened market arrives / expires. Returns true if it was active.
+    pub fn clear_market_slot(&mut self, dedupe_key: &str) -> bool {
+        self.market_opened_dedupes.remove(dedupe_key);
+        let was_active = self.active_market_dedupe.as_deref() == Some(dedupe_key);
+        if was_active {
+            self.active_market_dedupe = None;
+        }
+        was_active
     }
 }

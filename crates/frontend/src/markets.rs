@@ -13,6 +13,12 @@ pub struct MarketListItem {
     pub route_id: String,
     pub trip_id: String,
     pub stop_id: String,
+    pub start_stop_id: String,
+    pub start_stop_label: String,
+    pub target_stop_label: String,
+    pub start_time_label: String,
+    pub target_time_label: String,
+    pub journey_label: String,
     pub outcome: String,
     pub outcome_label: String,
     pub is_open: bool,
@@ -34,8 +40,20 @@ pub struct TradeTapeRow {
     pub filled_at: String,
     pub actor_type: String,
     pub actor_label: String,
-    /// 0–100 early-side price for chart (sell of late ≈ early complement not used; use trade price).
+    /// Traded-side marginal price 0–100 (from `price_wad`).
     pub chart_pct: f64,
+}
+
+/// Dual-series SVG chart: early + late option prices over fills.
+#[derive(Debug, Clone)]
+pub struct PriceChart {
+    pub early_points: String,
+    pub late_points: String,
+    pub empty: bool,
+    pub last_early_cx: String,
+    pub last_early_cy: String,
+    pub last_late_cx: String,
+    pub last_late_cy: String,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +80,12 @@ pub struct MarketDetailView {
     pub route_id: String,
     pub trip_id: String,
     pub stop_id: String,
+    pub start_stop_id: String,
+    pub start_stop_label: String,
+    pub target_stop_label: String,
+    pub start_time_label: String,
+    pub target_time_label: String,
+    pub journey_label: String,
     pub train_id: String,
     pub frozen_eta_label: String,
     pub outcome: String,
@@ -72,8 +96,13 @@ pub struct MarketDetailView {
     pub price_early_wad: String,
     pub price_late_wad: String,
     pub opened_at: String,
-    pub chart_points: String,
+    pub chart_early_points: String,
+    pub chart_late_points: String,
     pub chart_empty: bool,
+    pub chart_last_early_cx: String,
+    pub chart_last_early_cy: String,
+    pub chart_last_late_cx: String,
+    pub chart_last_late_cy: String,
     pub trades: Vec<TradeTapeRow>,
 }
 
@@ -95,11 +124,22 @@ pub struct MarketsPresentation {
 impl From<&MarketSummary> for MarketListItem {
     fn from(row: &MarketSummary) -> Self {
         let is_open = row.outcome == "unresolved" || row.outcome.is_empty();
+        let start_stop_label = crate::stops::format_stop_label(&row.start_stop_id);
+        let target_stop_label = crate::stops::format_stop_label(&row.stop_id);
+        let start_time_label = crate::stops::format_unix_et(row.start_eta_unix);
+        let target_time_label = crate::stops::format_unix_et(row.frozen_eta_unix);
+        let journey_label = format!("{start_stop_label} → {target_stop_label}");
         Self {
             market_id: row.market_id.clone(),
             route_id: row.route_id.clone(),
             trip_id: row.trip_id.clone(),
             stop_id: row.stop_id.clone(),
+            start_stop_id: row.start_stop_id.clone(),
+            start_stop_label,
+            target_stop_label,
+            start_time_label,
+            target_time_label,
+            journey_label,
             outcome: row.outcome.clone(),
             outcome_label: outcome_label(&row.outcome),
             is_open,
@@ -128,7 +168,8 @@ impl MarketsPresentation {
         let banner = if open.is_empty() && resolved.is_empty() {
             Some((
                 BannerKind::Info,
-                "No markets yet. Open markets appear when a train freezes.".into(),
+                "No active market yet. Domain picks one random eligible train (≥3 stops ahead)."
+                    .into(),
             ))
         } else {
             None
@@ -146,19 +187,30 @@ pub fn market_detail_view(market: &Market, price_early_wad: &str, price_late_wad
     let outcome = market.outcome.as_str().to_string();
     let is_open = matches!(market.outcome, dto::MarketOutcome::Unresolved);
     let tape: Vec<TradeTapeRow> = trades.iter().map(TradeTapeRow::from).collect();
-    let (chart_points, chart_empty) = chart_polyline(&tape);
+    let chart = price_chart(&tape, price_early_wad, price_late_wad);
+    let start_stop_label = crate::stops::format_stop_label(&market.start_stop_id);
+    let target_stop_label = crate::stops::format_stop_label(&market.stop_id);
+    let start_time_label = crate::stops::format_unix_et(market.start_eta_unix);
+    let target_time_label = crate::stops::format_unix_et(market.frozen_eta_unix);
+    let journey_label = format!("{start_stop_label} → {target_stop_label}");
 
     MarketDetailView {
         market_id: market.market_id.0.clone(),
         route_id: market.route_id.clone(),
         trip_id: market.trip_id.clone(),
         stop_id: market.stop_id.clone(),
+        start_stop_id: market.start_stop_id.clone(),
+        start_stop_label,
+        target_stop_label,
+        start_time_label,
+        target_time_label,
+        journey_label,
         train_id: market
             .train_id
             .clone()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "—".into()),
-        frozen_eta_label: market.frozen_eta_unix.to_string(),
+        frozen_eta_label: crate::stops::format_unix_et(market.frozen_eta_unix),
         outcome: outcome.clone(),
         outcome_label: outcome_label(&outcome),
         is_open,
@@ -167,8 +219,13 @@ pub fn market_detail_view(market: &Market, price_early_wad: &str, price_late_wad
         price_early_wad: price_early_wad.to_string(),
         price_late_wad: price_late_wad.to_string(),
         opened_at: market.opened_at.to_rfc3339(),
-        chart_points,
-        chart_empty,
+        chart_early_points: chart.early_points,
+        chart_late_points: chart.late_points,
+        chart_empty: chart.empty,
+        chart_last_early_cx: chart.last_early_cx,
+        chart_last_early_cy: chart.last_early_cy,
+        chart_last_late_cx: chart.last_late_cx,
+        chart_last_late_cy: chart.last_late_cy,
         trades: tape,
     }
 }
@@ -237,32 +294,91 @@ pub fn agent_options(agents: &[AgentSummary]) -> Vec<AgentOption> {
         .collect()
 }
 
-/// SVG polyline points (viewBox 0 0 100 40). Y inverted so higher % is up.
-pub fn chart_polyline(trades: &[TradeTapeRow]) -> (String, bool) {
-    // Trades arrive newest-first; chart left→right oldest→newest.
-    let mut chronological: Vec<f64> = trades.iter().rev().map(|t| t.chart_pct).collect();
-    if chronological.is_empty() {
-        // Open baseline ~50/50.
-        chronological.push(50.0);
-        chronological.push(50.0);
-        let pts = "0,20 100,20".to_string();
-        return (pts, true);
-    }
-    if chronological.len() == 1 {
-        chronological.push(chronological[0]);
-    }
-    let n = chronological.len();
-    let mut parts = Vec::with_capacity(n);
-    for (i, pct) in chronological.iter().enumerate() {
-        let x = if n == 1 {
-            0.0
+/// Plot geometry for dual early/late price series (viewBox 0 0 640 280).
+const CHART_VB_W: f64 = 640.0;
+const CHART_VB_H: f64 = 280.0;
+const CHART_PAD_L: f64 = 52.0;
+const CHART_PAD_R: f64 = 20.0;
+const CHART_PAD_T: f64 = 18.0;
+const CHART_PAD_B: f64 = 36.0;
+
+fn chart_plot_size() -> (f64, f64) {
+    (
+        CHART_VB_W - CHART_PAD_L - CHART_PAD_R,
+        CHART_VB_H - CHART_PAD_T - CHART_PAD_B,
+    )
+}
+
+fn chart_xy(i: usize, n: usize, pct: f64) -> (f64, f64) {
+    let (plot_w, plot_h) = chart_plot_size();
+    let x = if n <= 1 {
+        CHART_PAD_L
+    } else {
+        CHART_PAD_L + (i as f64) * plot_w / ((n - 1) as f64)
+    };
+    let y = CHART_PAD_T + plot_h * (1.0 - pct.clamp(0.0, 100.0) / 100.0);
+    (x, y)
+}
+
+/// Build early + late price series from fills (newest-first tape) + live mark.
+///
+/// Each fill's `price_wad` is the traded side; the other side is the binary
+/// complement (`100 - p`). Series starts at open 50/50, ends at live chain mark.
+pub fn price_chart(
+    trades: &[TradeTapeRow],
+    price_early_wad: &str,
+    price_late_wad: &str,
+) -> PriceChart {
+    let live_early = wad_to_percent_f64(price_early_wad).unwrap_or(50.0);
+    let live_late = wad_to_percent_f64(price_late_wad).unwrap_or(100.0 - live_early);
+
+    // Chronological: open baseline → each fill → live mark.
+    let mut series: Vec<(f64, f64)> = vec![(50.0, 50.0)];
+    for t in trades.iter().rev() {
+        let p = t.chart_pct.clamp(0.0, 100.0);
+        let (early, late) = if t.side == "late" {
+            (100.0 - p, p)
         } else {
-            (i as f64) * 100.0 / ((n - 1) as f64)
+            (p, 100.0 - p)
         };
-        let y = 40.0 - (pct.clamp(0.0, 100.0) / 100.0 * 40.0);
-        parts.push(format!("{x:.2},{y:.2}"));
+        series.push((early, late));
     }
-    (parts.join(" "), false)
+    let empty = trades.is_empty();
+    if let Some(&(e, l)) = series.last() {
+        if (e - live_early).abs() > 0.05 || (l - live_late).abs() > 0.05 {
+            series.push((live_early, live_late));
+        } else {
+            // Snap last point to live mark so endpoint matches odds cards.
+            let last = series.len() - 1;
+            series[last] = (live_early, live_late);
+        }
+    }
+    // Need ≥2 points for a visible segment.
+    if series.len() == 1 {
+        series.push(series[0]);
+    }
+
+    let n = series.len();
+    let mut early_parts = Vec::with_capacity(n);
+    let mut late_parts = Vec::with_capacity(n);
+    for (i, &(early, late)) in series.iter().enumerate() {
+        let (xe, ye) = chart_xy(i, n, early);
+        let (xl, yl) = chart_xy(i, n, late);
+        early_parts.push(format!("{xe:.2},{ye:.2}"));
+        late_parts.push(format!("{xl:.2},{yl:.2}"));
+    }
+    let (last_ex, last_ey) = chart_xy(n - 1, n, series[n - 1].0);
+    let (last_lx, last_ly) = chart_xy(n - 1, n, series[n - 1].1);
+
+    PriceChart {
+        early_points: early_parts.join(" "),
+        late_points: late_parts.join(" "),
+        empty,
+        last_early_cx: format!("{last_ex:.2}"),
+        last_early_cy: format!("{last_ey:.2}"),
+        last_late_cx: format!("{last_lx:.2}"),
+        last_late_cy: format!("{last_ly:.2}"),
+    }
 }
 
 pub fn format_wad_percent(wad: &str) -> String {
@@ -354,7 +470,10 @@ mod tests {
                 market_id: "2".into(),
                 route_id: "A".into(),
                 trip_id: "t2".into(),
+                start_stop_id: "A01".into(),
+                start_eta_unix: 0,
                 stop_id: "s2".into(),
+                frozen_eta_unix: 1_700_000_000,
                 outcome: "early".into(),
                 price_early_wad: HALF_WAD.into(),
                 price_late_wad: HALF_WAD.into(),
@@ -363,7 +482,10 @@ mod tests {
                 market_id: "1".into(),
                 route_id: "B".into(),
                 trip_id: "t1".into(),
+                start_stop_id: "A01".into(),
+                start_eta_unix: 0,
                 stop_id: "s1".into(),
+                frozen_eta_unix: 1_700_000_100,
                 outcome: "unresolved".into(),
                 price_early_wad: HALF_WAD.into(),
                 price_late_wad: HALF_WAD.into(),
@@ -377,8 +499,39 @@ mod tests {
 
     #[test]
     fn empty_chart_is_flat_fifty() {
-        let (pts, empty) = chart_polyline(&[]);
-        assert!(empty);
-        assert!(pts.contains("20"));
+        let chart = price_chart(&[], HALF_WAD, HALF_WAD);
+        assert!(chart.empty);
+        // Midline y for 50% in padded plot.
+        let (_, mid_y) = chart_xy(0, 2, 50.0);
+        assert!(chart.early_points.contains(&format!("{mid_y:.2}")));
+        assert!(chart.late_points.contains(&format!("{mid_y:.2}")));
+    }
+
+    #[test]
+    fn dual_series_mirrors_on_early_fill() {
+        let tape = vec![TradeTapeRow {
+            trade_id: "t1".into(),
+            side: "early".into(),
+            action: "buy".into(),
+            shares_label: "1".into(),
+            usdc_label: "1 USDC".into(),
+            price_pct: "60.0%".into(),
+            filled_at: "2026-01-01T00:00:00Z".into(),
+            actor_type: "agent".into(),
+            actor_label: "a".into(),
+            chart_pct: 60.0,
+        }];
+        // Live mark matches last fill so series is open → fill.
+        let early_wad = "600000000000000000";
+        let late_wad = "400000000000000000";
+        let chart = price_chart(&tape, early_wad, late_wad);
+        assert!(!chart.empty);
+        assert_ne!(chart.early_points, chart.late_points);
+        // Last point early above 50%, late below.
+        let last_ey: f64 = chart.last_early_cy.parse().unwrap();
+        let last_ly: f64 = chart.last_late_cy.parse().unwrap();
+        let (_, mid_y) = chart_xy(0, 2, 50.0);
+        assert!(last_ey < mid_y, "early 60% should plot above mid");
+        assert!(last_ly > mid_y, "late 40% should plot below mid");
     }
 }

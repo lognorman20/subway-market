@@ -59,6 +59,8 @@ diesel::table! {
         chain_resolve_tx -> Nullable<Text>,
         opened_at -> Timestamptz,
         resolved_at -> Nullable<Timestamptz>,
+        start_stop_id -> Text,
+        start_eta_unix -> Int8,
     }
 }
 

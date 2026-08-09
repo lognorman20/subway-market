@@ -40,6 +40,8 @@ pub struct MarketRow {
     pub chain_resolve_tx: Option<String>,
     pub opened_at: DateTime<Utc>,
     pub resolved_at: Option<DateTime<Utc>>,
+    pub start_stop_id: String,
+    pub start_eta_unix: i64,
 }
 
 /// `trades` table row.
@@ -121,6 +123,8 @@ pub struct NewMarketRow {
     pub chain_resolve_tx: Option<String>,
     pub opened_at: DateTime<Utc>,
     pub resolved_at: Option<DateTime<Utc>>,
+    pub start_stop_id: String,
+    pub start_eta_unix: i64,
 }
 
 /// Insert trade tape row.

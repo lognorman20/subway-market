@@ -1,10 +1,21 @@
 //! Market open/resolve intents from freeze + arrival (slice 7).
 //!
 //! Domain decides; backend executes chain. No on-time outcome — exact arrival = early.
+//!
+//! **One market at a time:** among eligible frozen trips, pick one at random when the
+//! active slot is empty. Do not open every freeze.
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use dto::{
-    DiffEvent, EventMeta, FreezeEvent, MarketOpenRequested, MarketOutcome, MarketResolveRequested,
+    remaining_stops_to_target, DiffEvent, EventMeta, MarketOpenRequested, MarketOutcome,
+    MarketResolveRequested,
 };
+
+use crate::diff::dedupe_key;
+use crate::state::TripStore;
+use crate::types::TripState;
 
 /// Minimum stops ahead of current (`remaining[0]`) required to open a market.
 pub const MIN_STOPS_FOR_MARKET: usize = 3;
@@ -22,25 +33,74 @@ pub fn outcome_from_arrival(actual_arrival_unix: i64, frozen_eta_unix: i64) -> M
 }
 
 /// True when freeze target is far enough for a market (≥3 stops away).
-pub fn freeze_eligible_for_market(freeze: &FreezeEvent) -> bool {
-    freeze.remaining_stops >= MIN_STOPS_FOR_MARKET
+pub fn trip_eligible_for_market(state: &TripState) -> bool {
+    if state.frozen_eta_unix.is_none() || state.destination_stop_id.is_empty() {
+        return false;
+    }
+    remaining_stops_to_target(&state.remaining, &state.destination_stop_id) >= MIN_STOPS_FOR_MARKET
 }
 
-/// Build open intent from a freeze (caller must check [`freeze_eligible_for_market`]).
-pub fn open_requested_from_freeze(
-    freeze: &FreezeEvent,
-    train_id: Option<String>,
-) -> MarketOpenRequested {
-    MarketOpenRequested {
-        meta: EventMeta::new(),
-        dedupe_key: freeze.dedupe_key.clone(),
-        trip_id: freeze.trip_id.clone(),
-        route_id: freeze.route_id.clone(),
-        train_id,
-        stop_id: freeze.target_stop_id.clone(),
-        frozen_eta_unix: freeze.frozen_eta_unix,
-        liquidity_b: Some(DEFAULT_LIQUIDITY_B_MICRO_USDC.into()),
+/// Build open intent from a frozen trip (caller must check eligibility + slot).
+pub fn open_requested_from_trip(state: &TripState) -> Option<MarketOpenRequested> {
+    let frozen_eta_unix = state.frozen_eta_unix?;
+    if !trip_eligible_for_market(state) {
+        return None;
     }
+    let start_stop_id = state
+        .start_stop_id
+        .clone()
+        .or_else(|| state.remaining.first().map(|s| s.stop_id.clone()))
+        .unwrap_or_default();
+    let start_eta_unix = state
+        .start_eta_unix
+        .or(state.freeze_epoch_unix)
+        .unwrap_or(0);
+    Some(MarketOpenRequested {
+        meta: EventMeta::new(),
+        dedupe_key: dedupe_key(state),
+        trip_id: state.trip_id.clone(),
+        route_id: state.route_id.clone(),
+        train_id: state.train_id.clone(),
+        start_stop_id,
+        start_eta_unix,
+        stop_id: state.destination_stop_id.clone(),
+        frozen_eta_unix,
+        liquidity_b: Some(DEFAULT_LIQUIDITY_B_MICRO_USDC.into()),
+    })
+}
+
+/// If no active market, randomly pick one eligible frozen trip and reserve the slot.
+pub fn try_select_and_open_market(store: &mut TripStore, salt: u64) -> Option<MarketOpenRequested> {
+    if store.active_market_dedupe.is_some() {
+        return None;
+    }
+
+    let mut candidates: Vec<MarketOpenRequested> = Vec::new();
+    for state in store.trips() {
+        let key = dedupe_key(state);
+        if store.is_done(&key) || store.market_opened_dedupes.contains(&key) {
+            continue;
+        }
+        if let Some(req) = open_requested_from_trip(state) {
+            candidates.push(req);
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let idx = {
+        let mut hasher = DefaultHasher::new();
+        salt.hash(&mut hasher);
+        candidates.len().hash(&mut hasher);
+        for c in &candidates {
+            c.dedupe_key.hash(&mut hasher);
+        }
+        (hasher.finish() as usize) % candidates.len()
+    };
+    let req = candidates.swap_remove(idx);
+    store.note_market_opened(req.dedupe_key.clone());
+    Some(req)
 }
 
 /// Build resolve intent from a scored arrival diff.
@@ -57,20 +117,34 @@ pub fn resolve_requested_from_diff(diff: &DiffEvent) -> MarketResolveRequested {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dto::{ActualSource, DiffId, EventId};
+    use dto::{ActualSource, DiffId, EventId, StopEta};
 
-    fn sample_freeze(remaining_stops: usize) -> FreezeEvent {
-        FreezeEvent {
-            event_id: EventId::new(),
-            trip_id: "t1".into(),
+    fn frozen_trip(trip: &str, remaining_stops: usize) -> TripState {
+        let feed = 1_700_000_000_i64;
+        let mut remaining = vec![StopEta {
+            stop_id: "A01".into(),
+            eta_unix: feed,
+        }];
+        for i in 0..remaining_stops {
+            remaining.push(StopEta {
+                stop_id: format!("A{:02}", i + 2),
+                eta_unix: feed + 60 * (i as i64 + 1),
+            });
+        }
+        let target = remaining.last().unwrap().stop_id.clone();
+        let target_eta = remaining.last().unwrap().eta_unix;
+        TripState {
+            trip_id: trip.into(),
             route_id: "A".into(),
-            from_stop_id: "A01".into(),
-            target_stop_id: "A99".into(),
-            dedupe_key: "t1:A99:20260725".into(),
-            frozen_eta_unix: 1_700_000_100,
-            freeze_epoch_unix: 1_700_000_000,
-            remaining_stops,
             service_date: Some("20260725".into()),
+            train_id: Some("A1234".into()),
+            destination_stop_id: target,
+            remaining,
+            frozen_eta_unix: Some(target_eta),
+            freeze_epoch_unix: Some(feed),
+            start_stop_id: Some("A01".into()),
+            start_eta_unix: Some(feed),
+            ..Default::default()
         }
     }
 
@@ -116,22 +190,35 @@ mod tests {
 
     #[test]
     fn market_requires_three_stops() {
-        assert!(!freeze_eligible_for_market(&sample_freeze(2)));
-        assert!(freeze_eligible_for_market(&sample_freeze(3)));
-        assert!(freeze_eligible_for_market(&sample_freeze(4)));
+        assert!(!trip_eligible_for_market(&frozen_trip("t1", 2)));
+        assert!(trip_eligible_for_market(&frozen_trip("t1", 3)));
+        assert!(trip_eligible_for_market(&frozen_trip("t1", 4)));
     }
 
     #[test]
-    fn open_requested_from_eligible_freeze() {
-        let freeze = sample_freeze(3);
-        let open = open_requested_from_freeze(&freeze, Some("A1234".into()));
-        assert_eq!(open.dedupe_key, freeze.dedupe_key);
-        assert_eq!(open.stop_id, "A99");
-        assert_eq!(open.frozen_eta_unix, freeze.frozen_eta_unix);
+    fn open_requested_includes_start_fields() {
+        let state = frozen_trip("t1", 3);
+        let open = open_requested_from_trip(&state).expect("open");
+        assert_eq!(open.start_stop_id, "A01");
+        assert_eq!(open.start_eta_unix, 1_700_000_000);
+        assert_eq!(open.stop_id, state.destination_stop_id);
         assert_eq!(
             open.liquidity_b.as_deref(),
             Some(DEFAULT_LIQUIDITY_B_MICRO_USDC)
         );
+    }
+
+    #[test]
+    fn select_opens_exactly_one_among_many() {
+        let mut store = TripStore::new();
+        store.upsert(frozen_trip("t1", 3));
+        store.upsert(frozen_trip("t2", 3));
+        store.upsert(frozen_trip("t3", 3));
+        let first = try_select_and_open_market(&mut store, 42).expect("pick");
+        assert!(store.active_market_dedupe.is_some());
+        assert!(try_select_and_open_market(&mut store, 99).is_none());
+        assert_eq!(store.market_opened_dedupes.len(), 1);
+        assert!(store.market_opened_dedupes.contains(&first.dedupe_key));
     }
 
     #[test]

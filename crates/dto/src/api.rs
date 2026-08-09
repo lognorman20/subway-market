@@ -45,7 +45,13 @@ pub struct MarketSummary {
     pub market_id: String,
     pub route_id: String,
     pub trip_id: String,
+    #[serde(default)]
+    pub start_stop_id: String,
+    #[serde(default)]
+    pub start_eta_unix: i64,
     pub stop_id: String,
+    #[serde(default)]
+    pub frozen_eta_unix: i64,
     pub outcome: String,
     /// Marginal Early price in WAD (1e18 = 100%; matches on-chain `priceEarly`).
     pub price_early_wad: String,

@@ -7,6 +7,7 @@ mod config;
 mod markets;
 mod routes;
 mod session;
+mod stops;
 mod templates;
 mod trains;
 

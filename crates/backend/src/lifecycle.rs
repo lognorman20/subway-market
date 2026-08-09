@@ -11,6 +11,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use diesel::prelude::*;
+use diesel_async::pooled_connection::deadpool::Pool;
+use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use dto::{
     BusEvent, EventMeta, MarketId, MarketOpenRequested, MarketOpened, MarketOutcome,
     MarketResolveRequested, MarketResolved, MARKET_OPENED, MARKET_OPEN_REQUESTED,
@@ -45,6 +48,10 @@ pub fn new_registry() -> MarketRegistry {
 
 pub struct LifecycleHandler {
     pub chain: Arc<dyn TradingChain>,
+    /// Serialize on-chain txs (one platform signer; open+resolve run on parallel NATS tasks).
+    chain_lock: Arc<Mutex<()>>,
+    /// When set, skip open if any unresolved market exists (one market at a time).
+    pub pool: Option<Pool<AsyncPgConnection>>,
     pub nats: Option<TransportClient>,
     pub registry: MarketRegistry,
     /// Test-only: capture emitted facts instead of NATS.
@@ -53,9 +60,15 @@ pub struct LifecycleHandler {
 }
 
 impl LifecycleHandler {
-    pub fn new(chain: Arc<dyn TradingChain>, nats: TransportClient) -> Self {
+    pub fn new(
+        chain: Arc<dyn TradingChain>,
+        nats: TransportClient,
+        pool: Option<Pool<AsyncPgConnection>>,
+    ) -> Self {
         Self {
             chain,
+            chain_lock: Arc::new(Mutex::new(())),
+            pool,
             nats: Some(nats),
             registry: new_registry(),
             emit_recorder: None,
@@ -79,6 +92,18 @@ impl LifecycleHandler {
     }
 
     async fn handle_open(&self, req: MarketOpenRequested) -> Result<(), TransportError> {
+        if let Some(pool) = &self.pool {
+            let unresolved = count_unresolved_markets(pool).await?;
+            if unresolved > 0 {
+                warn!(
+                    dedupe_key = %req.dedupe_key,
+                    unresolved_count = unresolved,
+                    "skipping market open — unresolved market already active"
+                );
+                return Ok(());
+            }
+        }
+
         let liquidity = req
             .liquidity_b
             .as_deref()
@@ -92,6 +117,7 @@ impl LifecycleHandler {
             .clone()
             .unwrap_or_else(|| req.trip_id.clone());
 
+        let _chain_guard = self.chain_lock.lock().await;
         let (market_id, tx_hash) = self
             .chain
             .create_market(
@@ -131,6 +157,8 @@ impl LifecycleHandler {
             trip_id: req.trip_id.clone(),
             route_id: req.route_id.clone(),
             train_id: req.train_id.clone(),
+            start_stop_id: req.start_stop_id.clone(),
+            start_eta_unix: req.start_eta_unix,
             stop_id: req.stop_id.clone(),
             frozen_eta_unix: req.frozen_eta_unix,
             liquidity_b: liquidity.to_string(),
@@ -169,6 +197,7 @@ impl LifecycleHandler {
             )));
         };
 
+        let _chain_guard = self.chain_lock.lock().await;
         let tx_hash = self
             .chain
             .resolve_market(market_id, req.outcome)
@@ -215,6 +244,21 @@ impl EventHandler for LifecycleHandler {
     async fn handle(&self, subject: &str, event: BusEvent) -> Result<(), TransportError> {
         self.process(subject, event).await
     }
+}
+
+async fn count_unresolved_markets(pool: &Pool<AsyncPgConnection>) -> Result<i64, TransportError> {
+    use db::schema::markets::dsl::*;
+
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| TransportError::Message(format!("pool get: {e}")))?;
+    markets
+        .filter(outcome.eq("unresolved"))
+        .count()
+        .get_result(&mut conn)
+        .await
+        .map_err(|e| TransportError::Message(format!("count unresolved markets: {e}")))
 }
 
 async fn emit_with_retry(
@@ -270,6 +314,8 @@ mod tests {
             trip_id: "t1".into(),
             route_id: "A".into(),
             train_id: Some("A1234".into()),
+            start_stop_id: "A01".into(),
+            start_eta_unix: 1_700_000_000,
             stop_id: "A99".into(),
             frozen_eta_unix: 1_700_000_100,
             liquidity_b: Some(DEFAULT_LIQUIDITY_B_MICRO_USDC.into()),
@@ -291,6 +337,8 @@ mod tests {
         let recorder = Arc::new(Mutex::new(Vec::new()));
         let handler = LifecycleHandler {
             chain: chain.clone(),
+            chain_lock: Arc::new(Mutex::new(())),
+            pool: None,
             nats: None,
             registry: new_registry(),
             emit_recorder: Some(recorder.clone()),
@@ -332,6 +380,8 @@ mod tests {
 
         let handler = LifecycleHandler {
             chain: chain.clone(),
+            chain_lock: Arc::new(Mutex::new(())),
+            pool: None,
             nats: None,
             registry,
             emit_recorder: Some(recorder.clone()),
@@ -369,6 +419,8 @@ mod tests {
         let recorder = Arc::new(Mutex::new(Vec::new()));
         let handler = LifecycleHandler {
             chain: chain.clone(),
+            chain_lock: Arc::new(Mutex::new(())),
+            pool: None,
             nats: None,
             registry: new_registry(),
             emit_recorder: Some(recorder.clone()),

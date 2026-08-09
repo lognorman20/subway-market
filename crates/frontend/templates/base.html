@@ -308,11 +308,73 @@
     .chart-wrap {
       border: 1px solid var(--border);
       border-radius: 0.6rem;
-      padding: 0.75rem;
+      padding: 0.85rem 0.85rem 0.65rem;
       background: #fbfcfe;
       margin-bottom: 1rem;
     }
-    .chart-wrap svg { width: 100%; height: auto; display: block; }
+    .chart-wrap svg.price-chart {
+      width: 100%;
+      height: auto;
+      display: block;
+      min-height: 220px;
+    }
+    .chart-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.35rem;
+    }
+    .chart-legend {
+      display: flex;
+      gap: 0.85rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      padding-top: 0.15rem;
+    }
+    .chart-legend .leg {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .chart-legend .leg i {
+      display: inline-block;
+      width: 0.85rem;
+      height: 0.28rem;
+      border-radius: 999px;
+    }
+    .chart-legend .leg.early { color: var(--early); }
+    .chart-legend .leg.early i { background: var(--early); }
+    .chart-legend .leg.late { color: var(--late); }
+    .chart-legend .leg.late i { background: var(--late); }
+
+    .market-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem 1.25rem;
+      margin: 0.85rem 0 1rem;
+      padding: 0;
+    }
+    .market-meta dt {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      font-weight: 600;
+      margin: 0 0 0.15rem;
+    }
+    .market-meta dd {
+      margin: 0;
+      font-size: 0.95rem;
+      line-height: 1.35;
+    }
+    .market-row-active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .market-journey { min-width: 0; }
 
     .trade-form {
       display: grid;
@@ -364,6 +426,7 @@
       }
       .col.phase, .col.rem, .col.diff, .col.updated { display: none; }
       .odds-row { grid-template-columns: 1fr; }
+      .market-meta { grid-template-columns: 1fr; }
       .market-row {
         grid-template-columns: 3rem 1fr;
         grid-template-rows: auto auto;

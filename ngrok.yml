@@ -1,0 +1,18 @@
+# Demo tunnels for subway-market (no authtoken — merged with default ngrok agent config).
+#
+# Free tier = one static domain. Put it on the frontend. Frontend proxies to backend
+# on localhost (`BACKEND_URL=http://127.0.0.1:8080`), so humans only need this URL.
+#
+# Backend is also exposed under a random ngrok URL when the free plan allows a second
+# endpoint without binding the static domain (see `just ngrok`).
+#
+#   just ngrok
+
+version: "3"
+
+endpoints:
+  - name: frontend
+    description: HTMX UI (static domain — share with humans)
+    url: https://ripcord-grimy-banshee.ngrok-free.dev
+    upstream:
+      url: http://127.0.0.1:3000

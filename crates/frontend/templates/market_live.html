@@ -12,20 +12,53 @@
 </div>
 
 <div class="chart-wrap">
-  <div class="section-head">
-    <h3>Price chart</h3>
-    <p class="muted">
-      {% if detail.chart_empty %}
-      No fills yet — open baseline ~50/50.
-      {% else %}
-      Trade-history mark (newest right). Refreshes with live panel.
-      {% endif %}
-    </p>
+  <div class="section-head chart-head">
+    <div>
+      <h3>Price chart</h3>
+      <p class="muted">
+        {% if detail.chart_empty %}
+        No fills yet — open baseline 50/50.
+        {% else %}
+        Early vs late mark after each fill (newest right). Live panel refresh.
+        {% endif %}
+      </p>
+    </div>
+    <div class="chart-legend" aria-hidden="true">
+      <span class="leg early"><i></i> Early</span>
+      <span class="leg late"><i></i> Late</span>
+    </div>
   </div>
-  <svg viewBox="0 0 100 40" role="img" aria-label="Price history">
-    <polyline fill="none" stroke="#0057a8" stroke-width="1.5"
-              points="{{ detail.chart_points }}" />
-    <line x1="0" y1="20" x2="100" y2="20" stroke="#d9dee7" stroke-width="0.5" stroke-dasharray="2 2" />
+  <svg class="price-chart" viewBox="0 0 640 280" role="img"
+       aria-label="Early and late option prices over trade history">
+    <!-- Y grid + labels -->
+    <g class="chart-grid" stroke="#d9dee7" stroke-width="1" stroke-dasharray="4 4">
+      <line x1="52" y1="18" x2="620" y2="18" />
+      <line x1="52" y1="74.5" x2="620" y2="74.5" />
+      <line x1="52" y1="131" x2="620" y2="131" />
+      <line x1="52" y1="187.5" x2="620" y2="187.5" />
+      <line x1="52" y1="244" x2="620" y2="244" />
+    </g>
+    <g class="chart-axis" fill="#5c6573" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+      <text x="44" y="22" text-anchor="end">100%</text>
+      <text x="44" y="78.5" text-anchor="end">75%</text>
+      <text x="44" y="135" text-anchor="end">50%</text>
+      <text x="44" y="191.5" text-anchor="end">25%</text>
+      <text x="44" y="248" text-anchor="end">0%</text>
+      <text x="52" y="268" text-anchor="start">open</text>
+      <text x="620" y="268" text-anchor="end">now</text>
+    </g>
+    <!-- Mid emphasis (fair open) — solid, muted, under series -->
+    <line x1="52" y1="131" x2="620" y2="131" stroke="#b8c0cc" stroke-width="1.25" />
+    <polyline class="series late" fill="none" stroke="#9b2226" stroke-width="2.5"
+              stroke-linejoin="round" stroke-linecap="round"
+              points="{{ detail.chart_late_points }}" />
+    <polyline class="series early" fill="none" stroke="#0b6e4f" stroke-width="2.5"
+              stroke-linejoin="round" stroke-linecap="round"
+              points="{{ detail.chart_early_points }}" />
+    <circle class="mark early" cx="{{ detail.chart_last_early_cx }}" cy="{{ detail.chart_last_early_cy }}"
+            r="5" fill="#0b6e4f" stroke="#fff" stroke-width="2" />
+    <circle class="mark late" cx="{{ detail.chart_last_late_cx }}" cy="{{ detail.chart_last_late_cy }}"
+            r="5" fill="#9b2226" stroke="#fff" stroke-width="2" />
   </svg>
 </div>
 

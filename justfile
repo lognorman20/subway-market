@@ -255,6 +255,7 @@ deploy-local:
     echo "# paste into .env (never commit .env):"
     echo "USDC_ADDRESS=${usdc}"
     echo "SUBWAY_MARKET_ADDRESS=${market}"
+    echo "# DeployLocal also minted 1_000_000 MockUSDC to platform + approved SubwayMarket"
     env_file="${root}/.env"
     if [[ -f "${env_file}" ]]; then
       tmp="$(mktemp)"
@@ -265,5 +266,10 @@ deploy-local:
       echo "updated ${env_file}"
     else
       echo "no .env at repo root — copy .env.example → .env then re-run, or paste lines above"
+    fi
+    # Verify seed (broadcast platform). Fail soft if cast/rpc hiccup — deploy already succeeded.
+    platform="${PLATFORM_SIGNER_ADDRESS:-0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266}"
+    if bal="$(cast call "${usdc}" "balanceOf(address)(uint256)" "${platform}" --rpc-url "${rpc}" 2>/dev/null)"; then
+      echo "platform MockUSDC balance: ${bal}"
     fi
 

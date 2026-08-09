@@ -59,7 +59,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Domain intents → chain create/resolve → market opened/resolved facts.
     if let (Some(nats_lc), Some(chain_lc)) = (nats.clone(), chain.clone()) {
-        let handler = Arc::new(LifecycleHandler::new(chain_lc, nats_lc.clone()));
+        let handler = Arc::new(LifecycleHandler::new(
+            chain_lc,
+            nats_lc.clone(),
+            Some(pool.clone()),
+        ));
         tokio::spawn(async move {
             if let Err(err) =
                 transport::run_handler(nats_lc, LIFECYCLE_SUBJECTS, handler).await

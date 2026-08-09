@@ -51,6 +51,8 @@ fn opened(market_id: &str, dedupe: &str) -> BusEvent {
         trip_id: "t1".into(),
         route_id: "A".into(),
         train_id: Some("A1".into()),
+        start_stop_id: "A01".into(),
+        start_eta_unix: 1_699_999_900,
         stop_id: "A99".into(),
         frozen_eta_unix: 1_700_000_000,
         liquidity_b: "100000000".into(),

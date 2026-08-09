@@ -13,7 +13,7 @@ use crate::diff::{dedupe_key, score_arrival};
 use crate::freeze::{clear_freeze, expire_stale_freeze_if_needed, maybe_freeze};
 use crate::log_fmt::{arrival_message, freeze_message};
 use crate::market_lifecycle::{
-    freeze_eligible_for_market, open_requested_from_freeze, resolve_requested_from_diff,
+    resolve_requested_from_diff, try_select_and_open_market,
 };
 use crate::state::TripStore;
 use crate::types::TripState;
@@ -67,9 +67,9 @@ pub fn apply(store: &mut TripStore, event: &BusEvent, mode: EmitMode) -> Vec<Dom
 
 fn build_freeze_event(state: &TripState) -> FreezeEvent {
     let from_stop_id = state
-        .remaining
-        .first()
-        .map(|s| s.stop_id.clone())
+        .start_stop_id
+        .clone()
+        .or_else(|| state.remaining.first().map(|s| s.stop_id.clone()))
         .unwrap_or_default();
     FreezeEvent {
         event_id: EventId::new(),
@@ -212,24 +212,24 @@ fn on_trip_snapshot(
         return finish_with_optional_freeze(store, state, actual_unix, source, mode, freeze_emit);
     }
 
-    let train_id = state.train_id.clone();
     store.upsert(state);
-    freeze_emits(freeze_emit, train_id, mode)
+    freeze_emits(store, freeze_emit, mode, snap.feed_header_unix as u64)
 }
 
 fn freeze_emits(
+    store: &mut TripStore,
     freeze: Option<FreezeEvent>,
-    train_id: Option<String>,
     mode: EmitMode,
+    salt: u64,
 ) -> Vec<DomainEmit> {
-    let Some(freeze) = freeze else {
-        return vec![];
-    };
-    let mut out = vec![DomainEmit::Freeze(freeze.clone())];
-    if mode == EmitMode::Live && freeze_eligible_for_market(&freeze) {
-        out.push(DomainEmit::MarketOpenRequested(open_requested_from_freeze(
-            &freeze, train_id,
-        )));
+    let mut out = Vec::new();
+    if let Some(freeze) = freeze {
+        out.push(DomainEmit::Freeze(freeze));
+    }
+    if mode == EmitMode::Live {
+        if let Some(open) = try_select_and_open_market(store, salt) {
+            out.push(DomainEmit::MarketOpenRequested(open));
+        }
     }
     out
 }
@@ -315,10 +315,10 @@ fn finish_with_optional_freeze(
     mode: EmitMode,
     freeze_emit: Option<FreezeEvent>,
 ) -> Vec<DomainEmit> {
-    let train_id = state.train_id.clone();
-    let mut out = freeze_emits(freeze_emit, train_id, mode);
+    let salt = actual_unix as u64;
+    let mut out = freeze_emits(store, freeze_emit, mode, salt);
     if let Some(diff) = score_and_finish(store, state, actual_unix, actual_source, mode) {
-        out.extend(diff_emits(diff, mode));
+        out.extend(diff_emits(store, diff, mode));
     }
     out
 }
@@ -332,16 +332,24 @@ fn finish_trip_with_state(
 ) -> Vec<DomainEmit> {
     score_and_finish(store, state, actual_unix, actual_source, mode)
         .into_iter()
-        .flat_map(|diff| diff_emits(diff, mode))
+        .flat_map(|diff| diff_emits(store, diff, mode))
         .collect()
 }
 
-fn diff_emits(diff: DiffEvent, mode: EmitMode) -> Vec<DomainEmit> {
+fn diff_emits(store: &mut TripStore, diff: DiffEvent, mode: EmitMode) -> Vec<DomainEmit> {
     let mut out = vec![DomainEmit::Diff(diff.clone())];
     if mode == EmitMode::Live {
-        out.push(DomainEmit::MarketResolveRequested(
-            resolve_requested_from_diff(&diff),
-        ));
+        // Only resolve markets we actually opened (one-at-a-time slot).
+        if store.market_opened_dedupes.contains(&diff.dedupe_key) {
+            store.clear_market_slot(&diff.dedupe_key);
+            out.push(DomainEmit::MarketResolveRequested(
+                resolve_requested_from_diff(&diff),
+            ));
+            // Slot free — maybe open another eligible freeze.
+            if let Some(open) = try_select_and_open_market(store, diff.actual_unix as u64) {
+                out.push(DomainEmit::MarketOpenRequested(open));
+            }
+        }
     }
     out
 }
@@ -463,8 +471,53 @@ mod tests {
         });
         let open = open.expect("open_requested");
         assert_eq!(open.stop_id, "A04");
+        assert_eq!(open.start_stop_id, "A01");
+        assert_eq!(open.start_eta_unix, feed);
         assert_eq!(open.frozen_eta_unix, feed + 180);
         assert_eq!(open.train_id.as_deref(), Some("A1234"));
+        assert_eq!(store.active_market_dedupe.as_deref(), Some(open.dedupe_key.as_str()));
+    }
+
+    #[test]
+    fn second_eligible_freeze_does_not_open_while_slot_taken() {
+        let mut store = TripStore::new();
+        apply(&mut store, &watchable(&["A"]), EmitMode::Live);
+        let feed = 1_700_000_000;
+        let remaining = vec![
+            stop("A01", feed),
+            stop("A02", feed + 60),
+            stop("A03", feed + 120),
+            stop("A04", feed + 180),
+        ];
+        let first = apply(&mut store, &trip(remaining.clone(), feed), EmitMode::Live);
+        assert_eq!(
+            first
+                .iter()
+                .filter(|e| matches!(e, DomainEmit::MarketOpenRequested(_)))
+                .count(),
+            1
+        );
+
+        let trip2 = BusEvent::Trip(TripSnapshot {
+            meta: EventMeta::new(),
+            trip_id: "t2".into(),
+            route_id: "A".into(),
+            service_date: Some("20260725".into()),
+            remaining: vec![
+                stop("A10", feed),
+                stop("A11", feed + 60),
+                stop("A12", feed + 120),
+                stop("A13", feed + 180),
+            ],
+            destination_stop_id: "A13".into(),
+            feed_header_unix: feed,
+            nyct_train_id: Some("A9999".into()),
+        });
+        let second = apply(&mut store, &trip2, EmitMode::Live);
+        assert!(second.iter().any(|e| matches!(e, DomainEmit::Freeze(_))));
+        assert!(!second
+            .iter()
+            .any(|e| matches!(e, DomainEmit::MarketOpenRequested(_))));
     }
 
     #[test]

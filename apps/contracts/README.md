@@ -51,13 +51,15 @@ Order from repo root (do **not** need full stack / `just start`):
 
    Paste into `.env` (or let the recipe update an existing `.env`). Never commit `.env`.
 
+   Also mints **1_000_000 MockUSDC** to the platform and (when broadcast key == platform) approves `SubwayMarket` MAX — so live `createMarket` / FE opens work without a separate mint step.
+
 3. **Tests** (no anvil required):
 
    ```bash
    cd apps/contracts && forge test
    ```
 
-Constructor wiring: `SubwayMarket(usdc, platformSigner)` — platform = broadcast sender (anvil #0). Platform seeds `b * ln(2)` USDC on each `createMarket`.
+Constructor wiring: `SubwayMarket(usdc, platformSigner)` — platform = broadcast sender (anvil #0). Each `createMarket` pulls `b * ln(2)` USDC subsidy from the platform via `transferFrom`.
 
 ## Monad / anvil
 

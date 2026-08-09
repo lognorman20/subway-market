@@ -48,6 +48,8 @@ pub fn freeze_target_index(remaining_len: usize) -> Option<usize> {
 pub fn clear_freeze(state: &mut TripState) {
     state.frozen_eta_unix = None;
     state.freeze_epoch_unix = None;
+    state.start_stop_id = None;
+    state.start_eta_unix = None;
     state.destination_stop_id.clear();
     state.last_target_eta_unix = None;
     state.vehicle_at_stop_unix = None;
@@ -79,9 +81,9 @@ pub fn maybe_freeze(state: &mut TripState, feed_header_unix: i64) -> bool {
     let Some(idx) = freeze_target_index(state.remaining.len()) else {
         return false;
     };
-    let start_stop_id = state.remaining.first().map(|s| s.stop_id.as_str());
+    let start = state.remaining.first().cloned();
     let stop = &state.remaining[idx];
-    if start_stop_id == Some(stop.stop_id.as_str()) {
+    if start.as_ref().map(|s| s.stop_id.as_str()) == Some(stop.stop_id.as_str()) {
         return false;
     }
     // Target ETA must be strictly after the feed lock clock. Otherwise
@@ -89,6 +91,10 @@ pub fn maybe_freeze(state: &mut TripState, feed_header_unix: i64) -> bool {
     // Also covers zombie RT entities with past-due stop times.
     if stop.eta_unix <= feed_header_unix {
         return false;
+    }
+    if let Some(start) = start {
+        state.start_stop_id = Some(start.stop_id);
+        state.start_eta_unix = Some(start.eta_unix);
     }
     state.destination_stop_id = stop.stop_id.clone();
     state.frozen_eta_unix = Some(stop.eta_unix);

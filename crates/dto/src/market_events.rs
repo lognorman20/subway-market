@@ -17,6 +17,12 @@ pub struct MarketOpenRequested {
     pub route_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub train_id: Option<String>,
+    /// Start stop at freeze (`remaining[0]`). Empty on legacy events.
+    #[serde(default)]
+    pub start_stop_id: String,
+    /// Start-stop ETA unix at freeze. `0` on legacy events.
+    #[serde(default)]
+    pub start_eta_unix: i64,
     pub stop_id: String,
     pub frozen_eta_unix: i64,
     /// LMSR liquidity `b` in micro-USDC (6 decimals); backend may default when absent.
@@ -49,6 +55,12 @@ pub struct MarketOpened {
     pub route_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub train_id: Option<String>,
+    /// Start stop at freeze. Empty on legacy events.
+    #[serde(default)]
+    pub start_stop_id: String,
+    /// Start-stop ETA unix at freeze. `0` on legacy events.
+    #[serde(default)]
+    pub start_eta_unix: i64,
     pub stop_id: String,
     pub frozen_eta_unix: i64,
     /// LMSR liquidity `b` in micro-USDC (6 decimals, matches on-chain `liquidityB`).
@@ -125,6 +137,8 @@ mod tests {
             trip_id: "t1".into(),
             route_id: "A".into(),
             train_id: Some("A1234".into()),
+            start_stop_id: "A01".into(),
+            start_eta_unix: 1_699_999_900,
             stop_id: "A99".into(),
             frozen_eta_unix: 1_700_000_000,
             liquidity_b: None,

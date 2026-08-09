@@ -175,7 +175,10 @@ mod tests {
             market_id: "1".into(),
             route_id: "A".into(),
             trip_id: "trip-1".into(),
+            start_stop_id: "A01".into(),
+            start_eta_unix: 0,
             stop_id: "stop-1".into(),
+            frozen_eta_unix: 1_700_000_000,
             outcome: "unresolved".into(),
             price_early_wad: crate::markets::HALF_WAD.into(),
             price_late_wad: crate::markets::HALF_WAD.into(),
@@ -194,9 +197,16 @@ mod tests {
             market_id: "1".into(),
             route_id: "A".into(),
             trip_id: "t".into(),
-            stop_id: "s".into(),
+            stop_id: "A28N".into(),
+            start_stop_id: "A24N".into(),
+            start_stop_label: "59 St-Columbus Circle (northbound)".into(),
+            target_stop_label: "34 St-Penn Station (northbound)".into(),
+            start_time_label: "Sat Aug 09, 01:00 PM ET".into(),
+            target_time_label: "Sat Aug 09, 01:12 PM ET".into(),
+            journey_label: "59 St-Columbus Circle (northbound) → 34 St-Penn Station (northbound)"
+                .into(),
             train_id: "—".into(),
-            frozen_eta_label: "1".into(),
+            frozen_eta_label: "Sat Aug 09, 01:12 PM ET".into(),
             outcome: "unresolved".into(),
             outcome_label: "Open".into(),
             is_open: true,
@@ -205,14 +215,21 @@ mod tests {
             price_early_wad: crate::markets::HALF_WAD.into(),
             price_late_wad: crate::markets::HALF_WAD.into(),
             opened_at: "2026-01-01T00:00:00Z".into(),
-            chart_points: "0,20 100,20".into(),
+            chart_early_points: "52.00,131.00 620.00,131.00".into(),
+            chart_late_points: "52.00,131.00 620.00,131.00".into(),
             chart_empty: true,
+            chart_last_early_cx: "620.00".into(),
+            chart_last_early_cy: "131.00".into(),
+            chart_last_late_cx: "620.00".into(),
+            chart_last_late_cy: "131.00".into(),
             trades: Vec::new(),
         };
         let html = MarketLiveTemplate { detail }.render().expect("render live");
         assert!(html.contains("Early"));
         assert!(html.contains("Late"));
-        assert!(html.contains("polyline"));
+        assert!(html.contains("series early"));
+        assert!(html.contains("series late"));
+        assert!(html.contains("price-chart"));
     }
 
     #[test]

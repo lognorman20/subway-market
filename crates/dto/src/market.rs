@@ -118,6 +118,12 @@ pub struct Market {
     pub route_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub train_id: Option<String>,
+    /// Start stop at freeze. Empty when unknown (legacy rows).
+    #[serde(default)]
+    pub start_stop_id: String,
+    /// Start-stop ETA unix at freeze. `0` when unknown.
+    #[serde(default)]
+    pub start_eta_unix: i64,
     pub stop_id: String,
     pub frozen_eta_unix: i64,
     /// LMSR liquidity `b` in micro-USDC (6 decimals, matches on-chain `liquidityB`).

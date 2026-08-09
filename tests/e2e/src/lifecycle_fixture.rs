@@ -55,6 +55,8 @@ pub async fn emit_open_requested(nats_url: &str, fix: &OpenFixture) -> Result<()
         trip_id: fix.trip_id.clone(),
         route_id: fix.route_id.clone(),
         train_id: Some(fix.train_id.clone()),
+        start_stop_id: "A01".into(),
+        start_eta_unix: fix.frozen_eta_unix - 300,
         stop_id: fix.stop_id.clone(),
         frozen_eta_unix: fix.frozen_eta_unix,
         liquidity_b: Some("100000000".into()),

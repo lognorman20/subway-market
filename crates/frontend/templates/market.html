@@ -8,14 +8,29 @@
     <a href="/markets">← Markets</a>
   </p>
   <h2 style="margin-bottom: 0.25rem;">
-    Route {{ detail.route_id }} · {{ detail.outcome_label }}
+    {{ detail.route_id }} train · {{ detail.outcome_label }}
   </h2>
-  <p class="muted" style="margin-top: 0;">
-    Trip <span class="mono">{{ detail.trip_id }}</span>
-    · stop <span class="mono">{{ detail.stop_id }}</span>
-    · train {{ detail.train_id }}
-    · frozen ETA {{ detail.frozen_eta_label }}
+  <p class="market-journey-line" style="margin: 0.35rem 0 0.15rem; font-size: 1.05rem;">
+    <strong>{{ detail.journey_label }}</strong>
   </p>
+  <dl class="market-meta">
+    <div>
+      <dt>Start</dt>
+      <dd>{{ detail.start_stop_label }}<br><span class="muted">{{ detail.start_time_label }}</span></dd>
+    </div>
+    <div>
+      <dt>Target</dt>
+      <dd>{{ detail.target_stop_label }}<br><span class="muted">{{ detail.target_time_label }}</span></dd>
+    </div>
+    <div>
+      <dt>Train</dt>
+      <dd>{{ detail.train_id }}</dd>
+    </div>
+    <div>
+      <dt>Trip</dt>
+      <dd class="mono">{{ detail.trip_id }}</dd>
+    </div>
+  </dl>
 
   <div id="market-live"
        hx-get="/markets/{{ detail.market_id }}/live"

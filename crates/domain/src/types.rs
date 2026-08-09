@@ -14,6 +14,10 @@ pub struct TripState {
     pub remaining: Vec<StopEta>,
     pub frozen_eta_unix: Option<i64>,
     pub freeze_epoch_unix: Option<i64>,
+    /// Start stop id at freeze (`remaining[0]`).
+    pub start_stop_id: Option<String>,
+    /// Start stop ETA unix at freeze (scheduled/arrival at lock).
+    pub start_eta_unix: Option<i64>,
     /// Last ETA for target while still in `remaining` (stop_time source).
     pub last_target_eta_unix: Option<i64>,
     /// Vehicle reported at target stop.
