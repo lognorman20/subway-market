@@ -175,6 +175,45 @@ check:
 test:
     cargo test --workspace
 
+# ── E2E harness (slice 11) ───────────────────────────────────────────────────
+
+# Unit/harness pieces only (no full stack required).
+e2e-unit:
+    cargo check -p e2e
+    cargo test -p e2e
+
+# Full-stack suite. Prereq: just anvil → deploy-local → up → start (or start-with-frontend).
+# E2E 1–2 need backend FUNDING_MODE=local. E2E 3 needs FUNDING_MODE=testnet + RAIN_*.
+e2e: e2e-unit
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export E2E_FULL=1
+    export E2E3_HARNESS_TRADES="${E2E3_HARNESS_TRADES:-1}"
+    echo "E2E 1–2 → backend=${BACKEND_URL:-http://127.0.0.1:8080} (expect FUNDING_MODE=local)"
+    cargo test -p e2e --test e2e1_lifecycle --test e2e2_human_trade -- --nocapture --test-threads=1
+    echo "E2E 3 → expect FUNDING_MODE=testnet + RAIN_* (soft-skip on sandbox/network failures)"
+    cargo test -p e2e --test e2e3_rain_agent -- --nocapture
+
+# Composer-2.5 agent leg handoff (after E2E 3 wrote .e2e/agent-handoff.env).
+# Parent orchestrator: spawn Task model=composer-2.5 with scripts/e2e-agent-prompt.md.
+e2e-agent:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(git rev-parse --show-toplevel)"
+    handoff="${root}/.e2e/agent-handoff.env"
+    prompt="${root}/tests/e2e/scripts/e2e-agent-prompt.md"
+    if [[ ! -f "${handoff}" ]]; then
+      echo "missing ${handoff} — run just e2e (E2E 3) first, or set E2E3_HARNESS_TRADES=0 after fund" >&2
+      exit 1
+    fi
+    echo "=== agent handoff ==="
+    cat "${handoff}"
+    echo ""
+    echo "=== composer-2.5 prompt ==="
+    echo "Spawn Task/subagent model=composer-2.5 with:"
+    echo "  ${prompt}"
+    echo "Load env from ${handoff}; read llms.txt; buy+sell via Bearer AGENT_API_KEY."
+
 # ── chain / anvil ────────────────────────────────────────────────────────────
 
 # Host anvil on 127.0.0.1:8545 (foreground; Ctrl-C stops).

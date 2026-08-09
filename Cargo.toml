@@ -17,6 +17,7 @@ members = [
     "apps/backend",
     "apps/frontend",
     "apps/observe",
+    "tests/e2e",
 ]
 
 [workspace.package]
