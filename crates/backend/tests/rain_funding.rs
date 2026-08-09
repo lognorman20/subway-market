@@ -812,6 +812,110 @@ async fn simulate_credit_on_flag_credits_once_webhook_no_double() {
 }
 
 #[tokio::test]
+async fn fail_webhook_after_credit_on_simulate_keeps_settled() {
+    let server = MockServer::start().await;
+    let route_id = "e9b2c3d4-e5f6-7890-abcd-ef1234567890";
+    let tx_id = "e9c3d4e5-f6a7-8901-bcde-f12345678901";
+    setup_mocks(&server, route_id, tx_id).await;
+
+    let (app, _) = testnet_app_with_credit_on_simulate(&server, true).await;
+    let session = human_session(&app).await;
+    let agent = create_agent(&app, &session).await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/funding/rain")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "agent_id": agent.agent_id.as_ref(),
+                        "amount_usdc": 100
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let fund_body = json_body(res).await;
+    assert_eq!(fund_body["status"], "settled");
+    let funding_id = fund_body["funding_id"].as_str().unwrap().to_string();
+
+    // Late Rain fail after sandbox credit-on-simulate must not flip Settled→Failed.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/webhooks/rain")
+                .header("content-type", "application/json")
+                .header("Api-Key", "test-rain-key")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "id": tx_id,
+                        "data": {
+                            "id": tx_id,
+                            "type": "transfer",
+                            "transfer": {
+                                "status": "failed",
+                                "source": { "currency": "usd", "rail": "ach", "amount": "100" },
+                                "destination": { "currency": "usdc", "rail": "base", "amount": "100" }
+                            }
+                        }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let wh_body = json_body(res).await;
+    assert_eq!(status, StatusCode::OK, "{wh_body}");
+    assert_eq!(wh_body["handled"], false);
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/funding/rain/{funding_id}"))
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let get_body = json_body(res).await;
+    assert_eq!(status, StatusCode::OK, "{get_body}");
+    assert_eq!(
+        get_body["status"], "settled",
+        "fail webhook must not flip Settled→Failed after credit-on-simulate"
+    );
+    assert_eq!(get_body["bankroll_usdc"], 100_000_000);
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/agents/{}/bankroll", agent.agent_id.as_ref()))
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let br = json_body(res).await;
+    assert_eq!(br["available_usdc"], 100_000_000);
+}
+
+#[tokio::test]
 async fn flag_off_simulate_alone_does_not_credit() {
     let server = MockServer::start().await;
     let route_id = "c9b2c3d4-e5f6-7890-abcd-ef1234567890";

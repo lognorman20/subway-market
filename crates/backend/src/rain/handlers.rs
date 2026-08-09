@@ -288,14 +288,25 @@ pub async fn rain_webhook(
 
     if !parsed.status.is_terminal_success() {
         if parsed.status.is_terminal_failure() {
+            // Only Pending → Failed. Settled (e.g. sandbox credit-on-simulate) must stay
+            // Settled so a late Rain fail webhook cannot strand a credited bankroll.
             if let Some(funding) = match_pending(&state.pending_funding, &parsed).await {
-                state
-                    .pending_funding
-                    .update(&funding.id, |f| {
-                        f.status = FundingStatus::Failed;
-                        f.rain_tx_id = Some(parsed.tx_id.clone());
-                    })
-                    .await;
+                if funding.status == FundingStatus::Pending {
+                    state
+                        .pending_funding
+                        .update(&funding.id, |f| {
+                            f.status = FundingStatus::Failed;
+                            f.rain_tx_id = Some(parsed.tx_id.clone());
+                        })
+                        .await;
+                } else {
+                    info!(
+                        funding_id = %funding.id,
+                        status = ?funding.status,
+                        tx_id = %parsed.tx_id,
+                        "rain fail webhook ignored — funding already settled (sandbox interim credit kept)"
+                    );
+                }
             }
         }
         return Ok(Json(serde_json::json!({
