@@ -2,87 +2,216 @@
 pragma solidity ^0.8.24;
 
 import {SubwayMarket} from "../src/SubwayMarket.sol";
-import {MockUSDC} from "./MockUSDC.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
+import {MockUSDC} from "../src/mocks/MockUSDC.sol";
+import {LMSRMath} from "../src/LMSRMath.sol";
 
-/// @dev Helper so tests can act as distinct traders without forge-std cheatcodes.
-contract MarketTrader {
-    IERC20 public immutable usdc;
+/// @dev Platform-signer stand-in: holds USDC, calls market on behalf of accounts.
+contract PlatformCaller {
+    MockUSDC public immutable usdc;
     SubwayMarket public immutable market;
 
     constructor(address usdc_, address market_) {
-        usdc = IERC20(usdc_);
+        usdc = MockUSDC(usdc_);
         market = SubwayMarket(market_);
     }
 
-    function buy(uint256 marketId, SubwayMarket.Side side, uint256 amount) external {
-        usdc.approve(address(market), amount);
-        market.buy(marketId, side, amount);
+    function createMarket(
+        string calldata trainId,
+        string calldata tripId,
+        string calldata stopId,
+        uint64 frozenEtaUnix,
+        uint256 liquidityB
+    ) external returns (uint256) {
+        uint256 subsidy = LMSRMath.requiredSubsidy(liquidityB);
+        usdc.approve(address(market), subsidy);
+        return market.createMarket(trainId, tripId, stopId, frozenEtaUnix, liquidityB);
     }
 
-    function sell(uint256 marketId, SubwayMarket.Side side, uint256 amount) external {
-        market.sell(marketId, side, amount);
+    function buy(uint256 marketId, address account, SubwayMarket.Side side, uint256 shares)
+        external
+    {
+        uint256 quote = market.quoteBuy(marketId, side, shares);
+        usdc.approve(address(market), quote);
+        market.buy(marketId, account, side, shares);
     }
 
-    function claim(uint256 marketId) external {
-        market.claim(marketId);
+    function sell(uint256 marketId, address account, SubwayMarket.Side side, uint256 shares)
+        external
+    {
+        market.sell(marketId, account, side, shares);
+    }
+
+    function resolveMarket(uint256 marketId, SubwayMarket.Outcome outcome) external {
+        market.resolveMarket(marketId, outcome);
+    }
+
+    function resolveMarketFromArrival(uint256 marketId, uint64 actualArrivalUnix) external {
+        market.resolveMarketFromArrival(marketId, actualArrivalUnix);
+    }
+
+    function claim(uint256 marketId, address account) external {
+        market.claim(marketId, account);
     }
 }
 
 contract SubwayMarketTest {
     uint256 internal constant ONE_USDC = 1_000_000;
+    uint256 internal constant WAD = 1e18;
+    /// @dev LMSR liquidity parameter (USDC 6 decimals).
+    uint256 internal constant B = 100 * ONE_USDC;
 
     MockUSDC internal usdc;
     SubwayMarket internal market;
-    MarketTrader internal yesTrader;
-    MarketTrader internal noTrader;
+    PlatformCaller internal platform;
+
+    address internal alice = address(0xA11CE);
+    address internal bob = address(0xB0B);
 
     function setUp() public {
         usdc = new MockUSDC();
+        // Deploy market with temporary platform; re-point after PlatformCaller exists.
         market = new SubwayMarket(address(usdc), address(this));
-        yesTrader = new MarketTrader(address(usdc), address(market));
-        noTrader = new MarketTrader(address(usdc), address(market));
+        platform = new PlatformCaller(address(usdc), address(market));
+        market.setPlatform(address(platform));
+
+        // Seed platform with plenty of USDC for subsidy + trades.
+        usdc.mint(address(platform), 1_000_000 * ONE_USDC);
     }
 
-    function test_create_buy_resolve_claim_happyPath() public {
-        uint256 marketId = market.createMarket("train-7", "trip-2026-08-08", bytes("route-A"));
-        require(marketId == 0, "first market id");
+    function test_createMarket_seedsSubsidyAndFiftyFifty() public {
+        uint256 beforeBal = usdc.balanceOf(address(platform));
+        uint256 marketId = platform.createMarket("7", "trip-1", "stop-42", 1_700_000_000, B);
+        require(marketId == 0, "id");
 
-        usdc.mint(address(yesTrader), 100 * ONE_USDC);
-        usdc.mint(address(noTrader), 50 * ONE_USDC);
+        uint256 subsidy = LMSRMath.requiredSubsidy(B);
+        require(usdc.balanceOf(address(platform)) == beforeBal - subsidy, "subsidy pulled");
+        require(usdc.balanceOf(address(market)) == subsidy, "subsidy escrowed");
 
-        yesTrader.buy(marketId, SubwayMarket.Side.Yes, 100 * ONE_USDC);
-        noTrader.buy(marketId, SubwayMarket.Side.No, 50 * ONE_USDC);
+        uint256 pEarly = market.priceEarly(marketId);
+        uint256 pLate = market.priceLate(marketId);
+        // ~50/50 within 0.1%
+        require(pEarly > WAD / 2 - WAD / 1000, "early ~50");
+        require(pEarly < WAD / 2 + WAD / 1000, "early ~50 hi");
+        require(pLate > WAD / 2 - WAD / 1000, "late ~50");
+    }
 
-        (,,, SubwayMarket.Outcome outcome, uint256 yesPool, uint256 noPool,) = market.markets(marketId);
-        require(outcome == SubwayMarket.Outcome.Unresolved, "still open");
-        require(yesPool == 100 * ONE_USDC, "yes pool");
-        require(noPool == 50 * ONE_USDC, "no pool");
+    function test_buy_movesPriceTowardSide() public {
+        uint256 marketId = platform.createMarket("A", "t1", "s1", 1_700_000_100, B);
 
-        market.resolve(marketId, SubwayMarket.Outcome.Yes);
+        uint256 p0 = market.priceEarly(marketId);
+        platform.buy(marketId, alice, SubwayMarket.Side.Early, 10 * ONE_USDC);
+        uint256 p1 = market.priceEarly(marketId);
+        require(p1 > p0, "early price up after early buy");
+        require(market.priceLate(marketId) < WAD - p0, "late fell");
 
-        uint256 yesBefore = usdc.balanceOf(address(yesTrader));
-        yesTrader.claim(marketId);
-        uint256 yesAfter = usdc.balanceOf(address(yesTrader));
+        uint256 late0 = market.priceLate(marketId);
+        platform.buy(marketId, bob, SubwayMarket.Side.Late, 10 * ONE_USDC);
+        require(market.priceLate(marketId) > late0, "late price up after late buy");
+        require(market.earlyBalance(marketId, alice) == 10 * ONE_USDC, "alice shares");
+        require(market.lateBalance(marketId, bob) == 10 * ONE_USDC, "bob shares");
+    }
 
-        require(yesAfter - yesBefore == 150 * ONE_USDC, "yes winner payout");
+    function test_sell_movesPriceAwayFromSide() public {
+        uint256 marketId = platform.createMarket("B", "t2", "s2", 1_700_000_200, B);
+        platform.buy(marketId, alice, SubwayMarket.Side.Early, 20 * ONE_USDC);
+        uint256 pAfterBuy = market.priceEarly(marketId);
 
-        // Losing side keeps zero redeemable balance after resolution.
-        uint256 noBefore = usdc.balanceOf(address(noTrader));
-        try noTrader.claim(marketId) {
-            revert("loser should not claim");
+        uint256 platformBefore = usdc.balanceOf(address(platform));
+        platform.sell(marketId, alice, SubwayMarket.Side.Early, 8 * ONE_USDC);
+        require(usdc.balanceOf(address(platform)) > platformBefore, "proceeds returned");
+        require(market.earlyBalance(marketId, alice) == 12 * ONE_USDC, "remaining");
+        require(market.priceEarly(marketId) < pAfterBuy, "early price down after sell");
+    }
+
+    function test_resolve_exactOnTime_isEarly() public {
+        uint64 frozen = 1_700_000_500;
+        uint256 marketId = platform.createMarket("C", "t3", "s3", frozen, B);
+
+        require(
+            market.outcomeFromArrival(frozen, frozen) == SubwayMarket.Outcome.Early,
+            "exact = early"
+        );
+        require(
+            market.outcomeFromArrival(frozen, frozen - 1) == SubwayMarket.Outcome.Early,
+            "before = early"
+        );
+        require(
+            market.outcomeFromArrival(frozen, frozen + 1) == SubwayMarket.Outcome.Late,
+            "after = late"
+        );
+
+        platform.resolveMarketFromArrival(marketId, frozen);
+        (,,,,,,, SubwayMarket.Outcome outcome,) = _marketTuple(marketId);
+        require(outcome == SubwayMarket.Outcome.Early, "resolved early");
+        require(market.priceEarly(marketId) == WAD, "winner price 1");
+        require(market.priceLate(marketId) == 0, "loser price 0");
+    }
+
+    function test_resolve_late_and_claim() public {
+        uint64 frozen = 1_700_000_600;
+        uint256 marketId = platform.createMarket("D", "t4", "s4", frozen, B);
+
+        platform.buy(marketId, alice, SubwayMarket.Side.Early, 5 * ONE_USDC);
+        platform.buy(marketId, bob, SubwayMarket.Side.Late, 15 * ONE_USDC);
+
+        platform.resolveMarketFromArrival(marketId, frozen + 30);
+        (,,,,,,, SubwayMarket.Outcome outcome,) = _marketTuple(marketId);
+        require(outcome == SubwayMarket.Outcome.Late, "late");
+
+        uint256 bobBefore = usdc.balanceOf(bob);
+        platform.claim(marketId, bob);
+        require(usdc.balanceOf(bob) - bobBefore == 15 * ONE_USDC, "bob 1:1 payout");
+
+        try platform.claim(marketId, alice) {
+            revert("early holder must not claim");
         } catch {}
-        require(usdc.balanceOf(address(noTrader)) == noBefore, "no payout for loser");
     }
 
-    function test_sell_before_resolve() public {
-        uint256 marketId = market.createMarket("train-3", "trip-sell", bytes(""));
+    function test_fullLifecycle_create_buy_sell_resolve_claim() public {
+        uint64 frozen = 1_700_000_700;
+        uint256 marketId = platform.createMarket("E", "t5", "StopX", frozen, B);
 
-        usdc.mint(address(yesTrader), 40 * ONE_USDC);
-        yesTrader.buy(marketId, SubwayMarket.Side.Yes, 40 * ONE_USDC);
-        yesTrader.sell(marketId, SubwayMarket.Side.Yes, 15 * ONE_USDC);
+        platform.buy(marketId, alice, SubwayMarket.Side.Early, 12 * ONE_USDC);
+        platform.buy(marketId, bob, SubwayMarket.Side.Late, 7 * ONE_USDC);
+        platform.sell(marketId, alice, SubwayMarket.Side.Early, 2 * ONE_USDC);
 
-        require(usdc.balanceOf(address(yesTrader)) == 15 * ONE_USDC, "partial sell refund");
-        require(market.yesBalance(marketId, address(yesTrader)) == 25 * ONE_USDC, "remaining shares");
+        require(market.earlyBalance(marketId, alice) == 10 * ONE_USDC, "alice after sell");
+        require(market.priceEarly(marketId) > WAD / 2, "early favored");
+
+        // Exact-on-time → early
+        platform.resolveMarketFromArrival(marketId, frozen);
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        platform.claim(marketId, alice);
+        require(usdc.balanceOf(alice) - aliceBefore == 10 * ONE_USDC, "alice redeem");
+
+        try platform.claim(marketId, bob) {
+            revert("late must not claim");
+        } catch {}
+    }
+
+    function test_resolveMarket_rejectsUnresolvedOutcome() public {
+        uint256 marketId = platform.createMarket("F", "t6", "s6", 1_700_000_800, B);
+        try platform.resolveMarket(marketId, SubwayMarket.Outcome.Unresolved) {
+            revert("should reject");
+        } catch {}
+    }
+
+    function _marketTuple(uint256 marketId)
+        internal
+        view
+        returns (
+            string memory,
+            string memory,
+            string memory,
+            uint64,
+            uint256,
+            uint256,
+            uint256,
+            SubwayMarket.Outcome,
+            bool
+        )
+    {
+        return market.markets(marketId);
     }
 }

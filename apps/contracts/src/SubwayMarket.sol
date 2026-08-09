@@ -2,59 +2,80 @@
 pragma solidity ^0.8.24;
 
 import {IERC20} from "./interfaces/IERC20.sol";
+import {LMSRMath} from "./LMSRMath.sol";
 
 /// @title SubwayMarket
-/// @notice Lean binary market for MTA train lateness (YES = late, NO = on time).
-/// @dev Scaffold for local anvil / Monad — not production-audited.
+/// @notice Binary LMSR market: will the train arrive early or late?
+/// @dev Custodial: platform signer is the on-chain caller; `account` holds shares.
+///      Resolution: arrival <= frozenEtaUnix → Early (exact-on-time counts early); else Late.
+///      Not production-audited.
 contract SubwayMarket {
-    string public constant VERSION = "0.1.0";
+    string public constant VERSION = "0.2.0-lmsr";
 
     enum Side {
-        Yes,
-        No
+        Early,
+        Late
     }
 
     enum Outcome {
         Unresolved,
-        Yes,
-        No
+        Early,
+        Late
     }
 
     struct Market {
         string trainId;
-        string dedupeKey;
-        bytes metadata;
+        string tripId;
+        string stopId;
+        uint64 frozenEtaUnix;
+        uint256 liquidityB;
+        uint256 qEarly;
+        uint256 qLate;
         Outcome outcome;
-        uint256 yesPool;
-        uint256 noPool;
         bool exists;
     }
 
     IERC20 public immutable usdc;
     address public owner;
-    address public resolver;
+    /// @notice Platform signer — sole operator for create / buy / sell / resolve.
+    address public platform;
 
     uint256 public nextMarketId;
     mapping(uint256 => Market) public markets;
-    mapping(uint256 => mapping(address => uint256)) public yesBalance;
-    mapping(uint256 => mapping(address => uint256)) public noBalance;
+    mapping(uint256 => mapping(address => uint256)) public earlyBalance;
+    mapping(uint256 => mapping(address => uint256)) public lateBalance;
     mapping(uint256 => mapping(address => bool)) public claimed;
 
     event MarketCreated(
         uint256 indexed marketId,
         string trainId,
-        string dedupeKey,
-        bytes metadata
+        string tripId,
+        string stopId,
+        uint64 frozenEtaUnix,
+        uint256 liquidityB,
+        uint256 subsidy
     );
-    event Buy(uint256 indexed marketId, address indexed account, Side side, uint256 amount);
-    event Sell(uint256 indexed marketId, address indexed account, Side side, uint256 amount);
-    event MarketResolved(uint256 indexed marketId, Outcome outcome);
+    event Buy(
+        uint256 indexed marketId,
+        address indexed account,
+        Side side,
+        uint256 shares,
+        uint256 cost
+    );
+    event Sell(
+        uint256 indexed marketId,
+        address indexed account,
+        Side side,
+        uint256 shares,
+        uint256 proceeds
+    );
+    event MarketResolved(uint256 indexed marketId, Outcome outcome, uint64 actualArrivalUnix);
     event Claimed(uint256 indexed marketId, address indexed account, uint256 amount);
-    event ResolverUpdated(address indexed resolver);
+    event PlatformUpdated(address indexed platform);
     event OwnershipTransferred(address indexed owner);
 
     error NotOwner();
-    error NotResolver();
+    error NotPlatform();
     error ZeroAddress();
     error MarketNotFound();
     error MarketAlreadyResolved(uint256 marketId);
@@ -64,28 +85,29 @@ contract SubwayMarket {
     error InvalidOutcome();
     error AlreadyClaimed();
     error TransferFailed();
+    error ZeroLiquidity();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
     }
 
-    modifier onlyResolver() {
-        if (msg.sender != resolver) revert NotResolver();
+    modifier onlyPlatform() {
+        if (msg.sender != platform) revert NotPlatform();
         _;
     }
 
-    constructor(address usdc_, address resolver_) {
-        if (usdc_ == address(0) || resolver_ == address(0)) revert ZeroAddress();
+    constructor(address usdc_, address platform_) {
+        if (usdc_ == address(0) || platform_ == address(0)) revert ZeroAddress();
         usdc = IERC20(usdc_);
         owner = msg.sender;
-        resolver = resolver_;
+        platform = platform_;
     }
 
-    function setResolver(address resolver_) external onlyOwner {
-        if (resolver_ == address(0)) revert ZeroAddress();
-        resolver = resolver_;
-        emit ResolverUpdated(resolver_);
+    function setPlatform(address platform_) external onlyOwner {
+        if (platform_ == address(0)) revert ZeroAddress();
+        platform = platform_;
+        emit PlatformUpdated(platform_);
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
@@ -94,95 +116,175 @@ contract SubwayMarket {
         emit OwnershipTransferred(newOwner);
     }
 
-    /// @notice Open a market keyed by train + dedupe identifiers (off-chain indexing).
+    /// @notice Pure resolution rule: on or before frozen ETA → Early; strictly after → Late.
+    function outcomeFromArrival(uint64 frozenEtaUnix, uint64 actualArrivalUnix)
+        public
+        pure
+        returns (Outcome)
+    {
+        return actualArrivalUnix <= frozenEtaUnix ? Outcome.Early : Outcome.Late;
+    }
+
+    /// @notice Open LMSR market; pulls b*ln(2) USDC subsidy from platform.
     function createMarket(
         string calldata trainId,
-        string calldata dedupeKey,
-        bytes calldata metadata
-    ) external returns (uint256 marketId) {
+        string calldata tripId,
+        string calldata stopId,
+        uint64 frozenEtaUnix,
+        uint256 liquidityB
+    ) external onlyPlatform returns (uint256 marketId) {
+        if (liquidityB == 0) revert ZeroLiquidity();
+
+        uint256 subsidy = LMSRMath.requiredSubsidy(liquidityB);
+        if (!usdc.transferFrom(msg.sender, address(this), subsidy)) revert TransferFailed();
+
         marketId = nextMarketId++;
         markets[marketId] = Market({
             trainId: trainId,
-            dedupeKey: dedupeKey,
-            metadata: metadata,
+            tripId: tripId,
+            stopId: stopId,
+            frozenEtaUnix: frozenEtaUnix,
+            liquidityB: liquidityB,
+            qEarly: 0,
+            qLate: 0,
             outcome: Outcome.Unresolved,
-            yesPool: 0,
-            noPool: 0,
             exists: true
         });
-        emit MarketCreated(marketId, trainId, dedupeKey, metadata);
+
+        emit MarketCreated(marketId, trainId, tripId, stopId, frozenEtaUnix, liquidityB, subsidy);
     }
 
-    /// @notice Stake USDC on YES (late) or NO (on time). One share per 1 USDC unit.
-    function buy(uint256 marketId, Side side, uint256 amount) external {
+    /// @notice Buy `shares` of Early or Late for `account`. Platform pays USDC.
+    function buy(uint256 marketId, address account, Side side, uint256 shares)
+        external
+        onlyPlatform
+    {
+        if (account == address(0)) revert ZeroAddress();
+        if (shares == 0) revert ZeroAmount();
         Market storage market = _openMarket(marketId);
-        if (amount == 0) revert ZeroAmount();
-        if (!usdc.transferFrom(msg.sender, address(this), amount)) revert TransferFailed();
 
-        if (side == Side.Yes) {
-            yesBalance[marketId][msg.sender] += amount;
-            market.yesPool += amount;
+        bool early = side == Side.Early;
+        uint256 costUsdc =
+            LMSRMath.buyCost(market.qEarly, market.qLate, market.liquidityB, early, shares);
+        if (!usdc.transferFrom(msg.sender, address(this), costUsdc)) revert TransferFailed();
+
+        if (early) {
+            market.qEarly += shares;
+            earlyBalance[marketId][account] += shares;
         } else {
-            noBalance[marketId][msg.sender] += amount;
-            market.noPool += amount;
+            market.qLate += shares;
+            lateBalance[marketId][account] += shares;
         }
 
-        emit Buy(marketId, msg.sender, side, amount);
+        emit Buy(marketId, account, side, shares, costUsdc);
     }
 
-    /// @notice Exit stake before resolution at 1:1 USDC.
-    function sell(uint256 marketId, Side side, uint256 amount) external {
+    /// @notice Sell `shares` for `account`. Platform receives USDC.
+    function sell(uint256 marketId, address account, Side side, uint256 shares)
+        external
+        onlyPlatform
+    {
+        if (account == address(0)) revert ZeroAddress();
+        if (shares == 0) revert ZeroAmount();
         Market storage market = _openMarket(marketId);
-        if (amount == 0) revert ZeroAmount();
 
-        if (side == Side.Yes) {
-            if (yesBalance[marketId][msg.sender] < amount) revert InsufficientShares();
-            yesBalance[marketId][msg.sender] -= amount;
-            market.yesPool -= amount;
-        } else {
-            if (noBalance[marketId][msg.sender] < amount) revert InsufficientShares();
-            noBalance[marketId][msg.sender] -= amount;
-            market.noPool -= amount;
+        bool early = side == Side.Early;
+        if (early) {
+            if (earlyBalance[marketId][account] < shares) revert InsufficientShares();
+        } else if (lateBalance[marketId][account] < shares) {
+            revert InsufficientShares();
         }
 
-        if (!usdc.transfer(msg.sender, amount)) revert TransferFailed();
-        emit Sell(marketId, msg.sender, side, amount);
+        uint256 proceeds =
+            LMSRMath.sellProceeds(market.qEarly, market.qLate, market.liquidityB, early, shares);
+
+        if (early) {
+            earlyBalance[marketId][account] -= shares;
+            market.qEarly -= shares;
+        } else {
+            lateBalance[marketId][account] -= shares;
+            market.qLate -= shares;
+        }
+
+        if (!usdc.transfer(msg.sender, proceeds)) revert TransferFailed();
+        emit Sell(marketId, account, side, shares, proceeds);
     }
 
-    /// @notice Oracle path — resolver picks the winning side after trip completes.
-    function resolve(uint256 marketId, Outcome outcome) external onlyResolver {
-        if (outcome != Outcome.Yes && outcome != Outcome.No) revert InvalidOutcome();
-
+    /// @notice Resolve to Early or Late only. Emits actualArrivalUnix=0 when unknown.
+    function resolveMarket(uint256 marketId, Outcome outcome) external onlyPlatform {
+        if (outcome != Outcome.Early && outcome != Outcome.Late) revert InvalidOutcome();
         Market storage market = _market(marketId);
         if (market.outcome != Outcome.Unresolved) revert MarketAlreadyResolved(marketId);
         market.outcome = outcome;
-        emit MarketResolved(marketId, outcome);
+        emit MarketResolved(marketId, outcome, 0);
     }
 
-    /// @notice Winners redeem parimutuel share of the combined pool.
-    function claim(uint256 marketId) external {
+    /// @notice Resolve from actual arrival vs frozen ETA (exact-on-time → Early).
+    function resolveMarketFromArrival(uint256 marketId, uint64 actualArrivalUnix)
+        external
+        onlyPlatform
+    {
+        Market storage market = _market(marketId);
+        if (market.outcome != Outcome.Unresolved) revert MarketAlreadyResolved(marketId);
+        Outcome outcome = outcomeFromArrival(market.frozenEtaUnix, actualArrivalUnix);
+        market.outcome = outcome;
+        emit MarketResolved(marketId, outcome, actualArrivalUnix);
+    }
+
+    /// @notice Redeem winning shares 1:1 USDC for `account`.
+    function claim(uint256 marketId, address account) external {
+        if (account == address(0)) revert ZeroAddress();
         Market storage market = _market(marketId);
         if (market.outcome == Outcome.Unresolved) revert MarketOpen(marketId);
-        if (claimed[marketId][msg.sender]) revert AlreadyClaimed();
+        if (claimed[marketId][account]) revert AlreadyClaimed();
 
         uint256 payout;
-        uint256 totalPool = market.yesPool + market.noPool;
-
-        if (market.outcome == Outcome.Yes) {
-            uint256 shares = yesBalance[marketId][msg.sender];
-            if (shares == 0) revert InsufficientShares();
-            payout = (shares * totalPool) / market.yesPool;
-            yesBalance[marketId][msg.sender] = 0;
+        if (market.outcome == Outcome.Early) {
+            payout = earlyBalance[marketId][account];
+            earlyBalance[marketId][account] = 0;
+            lateBalance[marketId][account] = 0;
         } else {
-            uint256 shares = noBalance[marketId][msg.sender];
-            if (shares == 0) revert InsufficientShares();
-            payout = (shares * totalPool) / market.noPool;
-            noBalance[marketId][msg.sender] = 0;
+            payout = lateBalance[marketId][account];
+            lateBalance[marketId][account] = 0;
+            earlyBalance[marketId][account] = 0;
         }
 
-        claimed[marketId][msg.sender] = true;
-        if (!usdc.transfer(msg.sender, payout)) revert TransferFailed();
-        emit Claimed(marketId, msg.sender, payout);
+        if (payout == 0) revert InsufficientShares();
+        claimed[marketId][account] = true;
+        if (!usdc.transfer(account, payout)) revert TransferFailed();
+        emit Claimed(marketId, account, payout);
+    }
+
+    /// @notice Marginal Early price in WAD (1e18 = 100%). After resolve: 1e18 or 0.
+    function priceEarly(uint256 marketId) external view returns (uint256) {
+        Market storage market = _market(marketId);
+        if (market.outcome == Outcome.Early) return LMSRMath.WAD;
+        if (market.outcome == Outcome.Late) return 0;
+        return LMSRMath.priceEarly(market.qEarly, market.qLate, market.liquidityB);
+    }
+
+    /// @notice Marginal Late price in WAD.
+    function priceLate(uint256 marketId) external view returns (uint256) {
+        Market storage market = _market(marketId);
+        if (market.outcome == Outcome.Late) return LMSRMath.WAD;
+        if (market.outcome == Outcome.Early) return 0;
+        return LMSRMath.WAD - LMSRMath.priceEarly(market.qEarly, market.qLate, market.liquidityB);
+    }
+
+    /// @notice Quote USDC cost to buy `shares` without executing.
+    function quoteBuy(uint256 marketId, Side side, uint256 shares) external view returns (uint256) {
+        Market storage market = _openMarket(marketId);
+        return LMSRMath.buyCost(
+            market.qEarly, market.qLate, market.liquidityB, side == Side.Early, shares
+        );
+    }
+
+    /// @notice Quote USDC proceeds to sell `shares` without executing.
+    function quoteSell(uint256 marketId, Side side, uint256 shares) external view returns (uint256) {
+        Market storage market = _openMarket(marketId);
+        return LMSRMath.sellProceeds(
+            market.qEarly, market.qLate, market.liquidityB, side == Side.Early, shares
+        );
     }
 
     function _market(uint256 marketId) internal view returns (Market storage market) {

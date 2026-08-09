@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IERC20} from "../src/interfaces/IERC20.sol";
+import {IERC20} from "../interfaces/IERC20.sol";
 
-/// @notice 6-decimal test token matching USDC-style amounts.
+/// @notice 6-decimal settlement token matching USDC-style amounts.
+/// @dev Deployable mock for local anvil (slice 2 deploy-local). Not test-only.
 contract MockUSDC is IERC20 {
     string public constant name = "Mock USDC";
     string public constant symbol = "mUSDC";
