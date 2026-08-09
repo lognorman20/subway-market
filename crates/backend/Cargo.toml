@@ -7,11 +7,39 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+alloy = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
 axum = { workspace = true }
+chain = { workspace = true }
+chrono = { workspace = true }
 db = { workspace = true }
+diesel = { workspace = true }
 diesel-async = { workspace = true }
 dto = { workspace = true }
+hex = "0.4"
+rand = "0.8"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
 tokio = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
 tracing = { workspace = true }
 transport = { workspace = true }
-tower-http = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { workspace = true, features = ["util"] }
+hex = "0.4"
+alloy = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+diesel = { workspace = true }
+diesel-async = { workspace = true }
+dto = { workspace = true }
+db = { workspace = true }
+transport = { workspace = true }

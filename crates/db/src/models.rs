@@ -15,6 +15,8 @@ pub struct AgentRow {
     pub display_name: Option<String>,
     pub api_key_hash: String,
     pub created_at: DateTime<Utc>,
+    /// Spendable bankroll in micro-USDC (6 decimals). Backend funding/identity write.
+    pub bankroll_usdc: i64,
 }
 
 /// `markets` table row.
@@ -86,7 +88,7 @@ pub struct AgentMarketPnlRow {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Insert new agent (ledger lane).
+/// Insert new agent (backend funding/identity; not a trade projection).
 #[derive(Debug, Clone, Insertable, Serialize, Deserialize)]
 #[diesel(table_name = agents)]
 pub struct NewAgentRow {
@@ -95,6 +97,7 @@ pub struct NewAgentRow {
     pub display_name: Option<String>,
     pub api_key_hash: String,
     pub created_at: DateTime<Utc>,
+    pub bankroll_usdc: i64,
 }
 
 /// Insert new market projection.

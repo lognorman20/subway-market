@@ -1,11 +1,11 @@
 //! Backend binary — HTTP API for agents and frontend.
 
 use anyhow::Context;
-use backend::{router, AppState};
+use backend::{router, trading_chain_connect, AppState, AuthStore, FundingConfig};
 use diesel_async::pooled_connection::deadpool::Pool;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::AsyncPgConnection;
-use tracing::info;
+use tracing::{info, warn};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -19,6 +19,8 @@ async fn main() -> anyhow::Result<()> {
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://subway:subway@127.0.0.1:5433/subway_ledger".into()
     });
+    let nats_url =
+        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4223".into());
 
     info!("connecting postgres");
     let config = AsyncDieselConnectionManager::<AsyncPgConnection>::new(database_url);
@@ -28,7 +30,38 @@ async fn main() -> anyhow::Result<()> {
         .context("build postgres pool")?;
     info!("postgres connected");
 
-    let app = router(AppState { pool });
+    // Boot continues without NATS (health/reads ok); buy/sell return 503 until bus is up.
+    let nats = match transport::connect(&nats_url).await {
+        Ok(client) => {
+            info!(%nats_url, "nats connected");
+            Some(client)
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                "nats unavailable — buy/sell disabled (503) until bus connects"
+            );
+            None
+        }
+    };
+
+    let chain = trading_chain_connect();
+    if chain.is_some() {
+        info!("chain client ready");
+    } else {
+        warn!("chain not configured (SUBWAY_MARKET_ADDRESS/USDC_ADDRESS) — buy/sell unavailable");
+    }
+
+    let funding = FundingConfig::from_env();
+    info!(?funding.mode, seed = funding.seed_bankroll_usdc, "funding");
+
+    let app = router(AppState {
+        pool,
+        auth: AuthStore::new(),
+        funding,
+        chain,
+        nats,
+    });
 
     transport::mark_ready();
     transport::log_healthy(&format!("backend listening on :{port}"));

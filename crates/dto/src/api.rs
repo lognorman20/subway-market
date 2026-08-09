@@ -98,6 +98,9 @@ pub struct BuyRequest {
     pub side: MarketSide,
     /// Share quantity in micro-USDC (6 decimals, matches on-chain `buy`/`sell` args).
     pub shares: String,
+    /// Required for human session auth; ignored when Bearer agent key authenticates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<AgentId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +109,9 @@ pub struct SellRequest {
     pub side: MarketSide,
     /// Share quantity in micro-USDC (6 decimals).
     pub shares: String,
+    /// Required for human session auth; ignored when Bearer agent key authenticates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<AgentId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,4 +212,45 @@ impl Default for TrainsListResponse {
             trains: Vec::new(),
         }
     }
+}
+
+/// `POST /auth/challenge` — SIWS-style login challenge for EVM wallets (CLI or Phantom).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthChallengeRequest {
+    /// Checksummed or lowercase `0x` address.
+    pub address: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthChallengeResponse {
+    pub challenge_id: String,
+    /// Exact UTF-8 message the wallet must `personal_sign`.
+    pub message: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// `POST /auth/verify` — recover address from EIP-191 signature, issue session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthVerifyRequest {
+    pub challenge_id: String,
+    pub address: String,
+    /// Hex signature (`0x` + 130 hex chars) from `personal_sign` / `cast wallet sign`.
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthVerifyResponse {
+    /// Opaque session token — send as `Authorization: Bearer sms_<token>` or `X-Session-Token`.
+    pub session_token: String,
+    pub wallet: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// `POST /bankroll/seed` — local funding only (`FUNDING_MODE=local`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeedBankrollRequest {
+    pub agent_id: AgentId,
+    /// Optional override in whole USDC; default = `SEED_BANKROLL_USDC` env.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount_usdc: Option<i64>,
 }

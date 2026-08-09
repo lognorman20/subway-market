@@ -1,7 +1,8 @@
 //! Database schema and migration helpers.
 //!
-//! **Ownership:** the **ledger** lane is the sole writer to Postgres.
-//! Other lanes may read via this crate's types/queries — never write.
+//! **Ownership:** the **ledger** lane is the sole writer for trade/PnL projections
+//! (markets/trades/positions/`agent_market_pnl` from bus). Backend may write
+//! agents + bankroll (funding/identity). Other lanes read via this crate.
 
 pub mod migrate;
 pub mod models;
