@@ -1,7 +1,8 @@
 //! Monad / alloy bindings for SubwayMarket LMSR.
 //!
-//! Build artifacts first: `cd apps/contracts && forge build`
-//! (JSON under `apps/contracts/out/` — gitignored).
+//! Bindings compile from vendored ABIs in `crates/chain/abi/` — no forge
+//! artifacts needed. After contract changes: `cd apps/contracts && forge build`,
+//! then refresh `abi/` (see README).
 
 pub mod bindings;
 pub mod client;
