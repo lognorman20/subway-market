@@ -2,6 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{DiffId, EventId, EventMeta};
+use crate::market_events::{
+    MarketOpened, MarketOpenRequested, MarketResolved, MarketResolveRequested, TradeFilled,
+};
 
 /// Ledger projection lifecycle for `tracked_trains.phase`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -33,6 +36,11 @@ pub enum BusEventType {
     VehicleUpdate,
     Freeze,
     Diff,
+    MarketOpenRequested,
+    MarketResolveRequested,
+    MarketOpened,
+    MarketResolved,
+    TradeFilled,
 }
 
 impl BusEventType {
@@ -43,6 +51,11 @@ impl BusEventType {
             Self::VehicleUpdate => "vehicle_update",
             Self::Freeze => "freeze",
             Self::Diff => "diff",
+            Self::MarketOpenRequested => "market_open_requested",
+            Self::MarketResolveRequested => "market_resolve_requested",
+            Self::MarketOpened => "market_opened",
+            Self::MarketResolved => "market_resolved",
+            Self::TradeFilled => "trade_filled",
         }
     }
 }
@@ -178,6 +191,16 @@ pub enum BusEvent {
     Freeze(FreezeEvent),
     #[serde(rename = "diff")]
     Diff(DiffEvent),
+    #[serde(rename = "market_open_requested")]
+    MarketOpenRequested(MarketOpenRequested),
+    #[serde(rename = "market_resolve_requested")]
+    MarketResolveRequested(MarketResolveRequested),
+    #[serde(rename = "market_opened")]
+    MarketOpened(MarketOpened),
+    #[serde(rename = "market_resolved")]
+    MarketResolved(MarketResolved),
+    #[serde(rename = "trade_filled")]
+    TradeFilled(TradeFilled),
 }
 
 impl BusEvent {
@@ -188,6 +211,11 @@ impl BusEvent {
             Self::Vehicle(e) => &e.meta.event_id,
             Self::Freeze(e) => &e.event_id,
             Self::Diff(e) => &e.event_id,
+            Self::MarketOpenRequested(e) => &e.meta.event_id,
+            Self::MarketResolveRequested(e) => &e.meta.event_id,
+            Self::MarketOpened(e) => &e.meta.event_id,
+            Self::MarketResolved(e) => &e.meta.event_id,
+            Self::TradeFilled(e) => &e.meta.event_id,
         }
     }
 
@@ -209,6 +237,11 @@ impl BusEvent {
             Self::Vehicle(_) => BusEventType::VehicleUpdate,
             Self::Freeze(_) => BusEventType::Freeze,
             Self::Diff(_) => BusEventType::Diff,
+            Self::MarketOpenRequested(_) => BusEventType::MarketOpenRequested,
+            Self::MarketResolveRequested(_) => BusEventType::MarketResolveRequested,
+            Self::MarketOpened(_) => BusEventType::MarketOpened,
+            Self::MarketResolved(_) => BusEventType::MarketResolved,
+            Self::TradeFilled(_) => BusEventType::TradeFilled,
         }
     }
 }

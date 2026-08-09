@@ -5,9 +5,13 @@
 pub mod api;
 pub mod events;
 pub mod ids;
+pub mod market;
+pub mod market_events;
 pub mod subjects;
 
 pub use api::*;
 pub use events::*;
 pub use ids::*;
+pub use market::*;
+pub use market_events::*;
 pub use subjects::*;
