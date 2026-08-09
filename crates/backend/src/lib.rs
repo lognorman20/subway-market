@@ -2,15 +2,14 @@
 //!
 //! **Deps:** `dto`, `transport`, `db`, `chain`. No cross-lane crate deps.
 //!
-//! Slice 7 seam: market create/resolve from domain intents lives in
-//! [`lifecycle`] (stubs only here).
+//! Market create/resolve from domain lifecycle intents: [`lifecycle`].
 
 mod agents;
 mod auth;
 mod error;
 mod funding;
 mod handlers;
-mod lifecycle;
+pub mod lifecycle;
 mod llms;
 mod markets;
 mod pnl;
@@ -22,6 +21,7 @@ pub mod trading_chain;
 pub use auth::AuthStore;
 pub use error::ApiError;
 pub use funding::{FundingConfig, FundingMode};
+pub use lifecycle::{LifecycleHandler, LIFECYCLE_SUBJECTS};
 pub use router::router;
 pub use state::AppState;
 pub use trading_chain::{

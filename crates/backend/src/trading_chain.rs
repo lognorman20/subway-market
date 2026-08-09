@@ -1,12 +1,13 @@
-//! Chain adapter for buy/sell + price reads (platform signer).
+//! Chain adapter for buy/sell/create/resolve + price reads (platform signer).
 
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use alloy::primitives::{Address, B256, U256};
 use async_trait::async_trait;
-use chain::{ChainClient, ChainConfig, Side};
-use dto::MarketSide;
+use chain::{ChainClient, ChainConfig, Outcome, Side};
+use dto::{MarketOutcome, MarketSide};
 use tokio::sync::Mutex;
 
 use crate::error::ApiError;
@@ -32,6 +33,23 @@ pub trait TradingChain: Send + Sync {
     ) -> Result<String, ApiError>;
     async fn price_early(&self, market_id: u64) -> Result<String, ApiError>;
     async fn price_late(&self, market_id: u64) -> Result<String, ApiError>;
+
+    /// Create LMSR market; returns `(market_id, tx_hash)`.
+    async fn create_market(
+        &self,
+        train_id: &str,
+        trip_id: &str,
+        stop_id: &str,
+        frozen_eta_unix: i64,
+        liquidity_b: u128,
+    ) -> Result<(u64, String), ApiError>;
+
+    /// Resolve market to Early or Late.
+    async fn resolve_market(
+        &self,
+        market_id: u64,
+        outcome: MarketOutcome,
+    ) -> Result<String, ApiError>;
 }
 
 fn side_to_chain(side: MarketSide) -> Side {
@@ -41,8 +59,22 @@ fn side_to_chain(side: MarketSide) -> Side {
     }
 }
 
+fn outcome_to_chain(outcome: MarketOutcome) -> Result<Outcome, ApiError> {
+    match outcome {
+        MarketOutcome::Early => Ok(Outcome::Early),
+        MarketOutcome::Late => Ok(Outcome::Late),
+        MarketOutcome::Unresolved => Err(ApiError::BadRequest(
+            "outcome must be early or late".into(),
+        )),
+    }
+}
+
 fn u256_to_u128(v: U256) -> Result<u128, ApiError> {
     u128::try_from(v).map_err(|_| ApiError::Internal("u256 exceeds u128".into()))
+}
+
+fn u256_to_u64(v: U256) -> Result<u64, ApiError> {
+    u64::try_from(v).map_err(|_| ApiError::Internal("u256 exceeds u64".into()))
 }
 
 fn map_chain_err(e: chain::ChainError) -> ApiError {
@@ -142,6 +174,44 @@ where
             .map_err(map_chain_err)?;
         Ok(p.to_string())
     }
+
+    async fn create_market(
+        &self,
+        train_id: &str,
+        trip_id: &str,
+        stop_id: &str,
+        frozen_eta_unix: i64,
+        liquidity_b: u128,
+    ) -> Result<(u64, String), ApiError> {
+        let frozen = u64::try_from(frozen_eta_unix)
+            .map_err(|_| ApiError::BadRequest("frozen_eta_unix must be >= 0".into()))?;
+        let client = self.inner.lock().await;
+        let (id, tx) = client
+            .create_market(
+                train_id,
+                trip_id,
+                stop_id,
+                frozen,
+                U256::from(liquidity_b),
+            )
+            .await
+            .map_err(map_chain_err)?;
+        Ok((u256_to_u64(id)?, format!("{tx:#x}")))
+    }
+
+    async fn resolve_market(
+        &self,
+        market_id: u64,
+        outcome: MarketOutcome,
+    ) -> Result<String, ApiError> {
+        let chain_outcome = outcome_to_chain(outcome)?;
+        let client = self.inner.lock().await;
+        let tx = client
+            .resolve_market(U256::from(market_id), chain_outcome)
+            .await
+            .map_err(map_chain_err)?;
+        Ok(format!("{tx:#x}"))
+    }
 }
 
 /// Connect from env when contract addresses are set; else `None`.
@@ -171,9 +241,12 @@ pub struct MockTradingChain {
     pub price_early_wad: String,
     pub price_late_wad: String,
     /// Fail `buy`/`sell` txs (quotes still succeed).
-    pub fail_tx: std::sync::atomic::AtomicBool,
-    pub buy_calls: std::sync::atomic::AtomicUsize,
-    pub sell_calls: std::sync::atomic::AtomicUsize,
+    pub fail_tx: AtomicBool,
+    pub buy_calls: AtomicUsize,
+    pub sell_calls: AtomicUsize,
+    pub create_calls: AtomicUsize,
+    pub resolve_calls: AtomicUsize,
+    pub next_market_id: AtomicU64,
 }
 
 impl MockTradingChain {
@@ -183,18 +256,29 @@ impl MockTradingChain {
             sell_proceeds: 500_000,
             price_early_wad: "500000000000000000".into(),
             price_late_wad: "500000000000000000".into(),
-            fail_tx: std::sync::atomic::AtomicBool::new(false),
-            buy_calls: std::sync::atomic::AtomicUsize::new(0),
-            sell_calls: std::sync::atomic::AtomicUsize::new(0),
+            fail_tx: AtomicBool::new(false),
+            buy_calls: AtomicUsize::new(0),
+            sell_calls: AtomicUsize::new(0),
+            create_calls: AtomicUsize::new(0),
+            resolve_calls: AtomicUsize::new(0),
+            next_market_id: AtomicU64::new(1),
         }
     }
 
     pub fn buy_call_count(&self) -> usize {
-        self.buy_calls.load(std::sync::atomic::Ordering::SeqCst)
+        self.buy_calls.load(Ordering::SeqCst)
     }
 
     pub fn sell_call_count(&self) -> usize {
-        self.sell_calls.load(std::sync::atomic::Ordering::SeqCst)
+        self.sell_calls.load(Ordering::SeqCst)
+    }
+
+    pub fn create_call_count(&self) -> usize {
+        self.create_calls.load(Ordering::SeqCst)
+    }
+
+    pub fn resolve_call_count(&self) -> usize {
+        self.resolve_calls.load(Ordering::SeqCst)
     }
 }
 
@@ -225,9 +309,8 @@ impl TradingChain for MockTradingChain {
         _side: MarketSide,
         _shares: u128,
     ) -> Result<String, ApiError> {
-        self.buy_calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if self.fail_tx.load(std::sync::atomic::Ordering::SeqCst) {
+        self.buy_calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail_tx.load(Ordering::SeqCst) {
             return Err(ApiError::Internal("mock chain fail".into()));
         }
         Ok(format!("0x{}", hex::encode(B256::repeat_byte(0xab))))
@@ -240,9 +323,8 @@ impl TradingChain for MockTradingChain {
         _side: MarketSide,
         _shares: u128,
     ) -> Result<String, ApiError> {
-        self.sell_calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if self.fail_tx.load(std::sync::atomic::Ordering::SeqCst) {
+        self.sell_calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail_tx.load(Ordering::SeqCst) {
             return Err(ApiError::Internal("mock chain fail".into()));
         }
         Ok(format!("0x{}", hex::encode(B256::repeat_byte(0xcd))))
@@ -254,6 +336,42 @@ impl TradingChain for MockTradingChain {
 
     async fn price_late(&self, _market_id: u64) -> Result<String, ApiError> {
         Ok(self.price_late_wad.clone())
+    }
+
+    async fn create_market(
+        &self,
+        _train_id: &str,
+        _trip_id: &str,
+        _stop_id: &str,
+        _frozen_eta_unix: i64,
+        _liquidity_b: u128,
+    ) -> Result<(u64, String), ApiError> {
+        self.create_calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail_tx.load(Ordering::SeqCst) {
+            return Err(ApiError::Internal("mock chain fail".into()));
+        }
+        let id = self.next_market_id.fetch_add(1, Ordering::SeqCst);
+        Ok((
+            id,
+            format!("0x{}", hex::encode(B256::repeat_byte(0x11))),
+        ))
+    }
+
+    async fn resolve_market(
+        &self,
+        _market_id: u64,
+        outcome: MarketOutcome,
+    ) -> Result<String, ApiError> {
+        self.resolve_calls.fetch_add(1, Ordering::SeqCst);
+        if !matches!(outcome, MarketOutcome::Early | MarketOutcome::Late) {
+            return Err(ApiError::BadRequest(
+                "outcome must be early or late".into(),
+            ));
+        }
+        if self.fail_tx.load(Ordering::SeqCst) {
+            return Err(ApiError::Internal("mock chain fail".into()));
+        }
+        Ok(format!("0x{}", hex::encode(B256::repeat_byte(0x22))))
     }
 }
 
