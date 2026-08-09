@@ -1,0 +1,122 @@
+{
+  "$schema": "https://lnav.org/schemas/format-v1.schema.json",
+  "rust_tracing_log": {
+    "title": "Rust tracing JSON",
+    "description": "JSON lines from transport::init_tracing_stdout / observe logging",
+    "json": true,
+    "level-field": "level",
+    "level": {
+      "fatal": "(?i)fatal",
+      "error": "(?i)error",
+      "warning": "(?i)warn",
+      "info": "(?i)info",
+      "debug": "(?i)debug",
+      "trace": "(?i)trace"
+    },
+    "timestamp-field": "timestamp",
+    "body-field": "fields/message",
+    "value": {
+      "level": {
+        "kind": "string",
+        "hidden": true
+      },
+      "target": {
+        "kind": "string",
+        "identifier": true
+      },
+      "fields": {
+        "kind": "json",
+        "hidden": true
+      },
+      "fields/message": {
+        "kind": "string"
+      },
+      "fields/detail": {
+        "kind": "string"
+      },
+      "fields/route_id": {
+        "kind": "string",
+        "identifier": true
+      },
+      "fields/trip_id": {
+        "kind": "string",
+        "identifier": true
+      },
+      "fields/outcome": {
+        "kind": "string",
+        "identifier": true
+      },
+      "fields/diff_seconds": {
+        "kind": "integer"
+      },
+      "fields/diff_id": {
+        "kind": "string",
+        "identifier": true,
+        "hidden": true
+      },
+      "fields/event_id": {
+        "kind": "string",
+        "identifier": true,
+        "hidden": true
+      },
+      "fields/service": {
+        "kind": "string",
+        "identifier": true,
+        "hidden": true
+      }
+    },
+    "line-format": [
+      {
+        "field": "__timestamp__",
+        "timestamp-format": "%H:%M:%S.%L"
+      },
+      " ",
+      "[",
+      {
+        "field": "__level__"
+      },
+      "] ",
+      {
+        "field": "target",
+        "max-width": 28,
+        "overflow": "truncate",
+        "prefix": "(",
+        "suffix": ")",
+        "default-value": ""
+      },
+      {
+        "field": "fields/route_id",
+        "prefix": " ",
+        "default-value": ""
+      },
+      {
+        "field": "fields/trip_id",
+        "prefix": " ",
+        "max-width": 22,
+        "overflow": "truncate",
+        "default-value": ""
+      },
+      {
+        "field": "fields/outcome",
+        "prefix": " →",
+        "default-value": ""
+      },
+      {
+        "field": "fields/diff_seconds",
+        "prefix": " ",
+        "suffix": "s",
+        "default-value": ""
+      },
+      " ",
+      {
+        "field": "fields/message",
+        "default-value": ""
+      },
+      {
+        "field": "fields/detail",
+        "prefix": " — ",
+        "default-value": ""
+      }
+    ]
+  }
+}

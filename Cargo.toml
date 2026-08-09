@@ -1,0 +1,84 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/dto",
+    "crates/transport",
+    "crates/db",
+    "crates/chain",
+    "crates/ingest",
+    "crates/domain",
+    "crates/ledger",
+    "crates/backend",
+    "crates/frontend",
+    "crates/observe",
+    "apps/ingest",
+    "apps/domain",
+    "apps/ledger",
+    "apps/backend",
+    "apps/frontend",
+    "apps/observe",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.94"
+
+[workspace.dependencies]
+# Internal
+dto = { path = "crates/dto" }
+transport = { path = "crates/transport" }
+db = { path = "crates/db" }
+chain = { path = "crates/chain" }
+ingest = { path = "crates/ingest" }
+domain = { path = "crates/domain" }
+ledger = { path = "crates/ledger" }
+backend = { path = "crates/backend" }
+frontend = { path = "crates/frontend" }
+observe = { path = "crates/observe" }
+
+# Async / runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# Transport (NATS)
+async-nats = "0.38"
+bytes = "1"
+
+# Serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# IDs / time
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP client / protobuf
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+prost = "0.13"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# HTTP (backend / frontend later)
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+askama = "0.12"
+
+# Database (ledger writes; other lanes read via db crate)
+diesel = { version = "2", features = ["postgres", "chrono", "uuid", "serde_json"] }
+diesel-async = { version = "0.5", features = ["postgres", "deadpool"] }
+diesel_migrations = "2"
+
+# Errors / misc
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive", "env"] }
+
+# TUI (observe)
+ratatui = "0.29"
+crossterm = "0.28"

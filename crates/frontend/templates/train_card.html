@@ -1,0 +1,39 @@
+<details class="train-card" data-dedupe="{{ train.dedupe_key }}">
+  <summary class="train-summary">
+    <span class="col route"><strong>{{ train.route_id }}</strong></span>
+    <span class="col train">
+      <span class="train-name">{{ train.train_label }}</span>
+      <span class="muted trip">{{ train.trip_id }}</span>
+    </span>
+    <span class="col phase"><span class="phase">{{ train.phase }}</span></span>
+    <span class="col rem">{{ train.remaining_label }}</span>
+    <span class="col diff">{{ train.diff_label }}</span>
+    <span class="col updated muted">{{ train.updated_at }}</span>
+  </summary>
+  <div class="train-focus">
+    <div class="focus-grid">
+      <div><span class="focus-label">Route</span><span class="focus-value">{{ train.route_id }}</span></div>
+      <div><span class="focus-label">Train</span><span class="focus-value">{{ train.train_label }}</span></div>
+      <div><span class="focus-label">Trip</span><span class="focus-value mono">{{ train.trip_id }}</span></div>
+      <div><span class="focus-label">Phase</span><span class="focus-value">{{ train.phase }}</span></div>
+      <div><span class="focus-label">Journey</span><span class="focus-value">{{ train.journey_label }}</span></div>
+      <div><span class="focus-label">Start stop</span><span class="focus-value">{{ train.start_stop_id }}</span></div>
+      <div><span class="focus-label">Target stop</span><span class="focus-value">{{ train.target_stop_id }}</span></div>
+      <div><span class="focus-label">Remaining</span><span class="focus-value">{{ train.remaining_label }}</span></div>
+      <div><span class="focus-label">Frozen ETA (unix)</span><span class="focus-value mono">{{ train.expected_eta_label }}</span></div>
+      <div><span class="focus-label">Frozen at</span><span class="focus-value mono">{{ train.frozen_at_label }}</span></div>
+      <div><span class="focus-label">Arrival (unix)</span><span class="focus-value mono">{{ train.arrival_label }}</span></div>
+      <div><span class="focus-label">Diff</span><span class="focus-value">{{ train.diff_label }}</span></div>
+      <div><span class="focus-label">Actual source</span><span class="focus-value">{{ train.actual_source }}</span></div>
+      <div><span class="focus-label">First seen</span><span class="focus-value mono">{{ train.first_seen_label }}</span></div>
+      <div><span class="focus-label">Updated</span><span class="focus-value mono">{{ train.updated_at }}</span></div>
+      <div><span class="focus-label">Dedupe key</span><span class="focus-value mono">{{ train.dedupe_key }}</span></div>
+      <div><span class="focus-label">Diff id</span><span class="focus-value mono">{{ train.diff_id }}</span></div>
+      <div><span class="focus-label">Freeze event</span><span class="focus-value mono">{{ train.freeze_event_id }}</span></div>
+      <div><span class="focus-label">Diff event</span><span class="focus-value mono">{{ train.diff_event_id }}</span></div>
+      <div><span class="focus-label">Action</span><span class="focus-value">{{ train.action }}</span></div>
+      <div><span class="focus-label">Side</span><span class="focus-value">{{ train.side }}</span></div>
+      <div><span class="focus-label">Reason</span><span class="focus-value">{{ train.reason }}</span></div>
+    </div>
+  </div>
+</details>

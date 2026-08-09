@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Subway Market{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --surface: #ffffff;
+      --text: #1a1d24;
+      --muted: #5c6573;
+      --accent: #0057a8;
+      --accent-soft: #e8f1fb;
+      --border: #d9dee7;
+      --warn-bg: #fff7e6;
+      --warn-border: #f0c36d;
+      --error-bg: #fdecec;
+      --error-border: #e08b8b;
+      --info-bg: #eef6ff;
+      --info-border: #9ec5f5;
+      --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .shell {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 3rem;
+    }
+
+    header.site {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand-mark {
+      width: 2.25rem;
+      height: 2.25rem;
+      border-radius: 0.5rem;
+      background: linear-gradient(135deg, #0057a8, #00a0e3);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 0.95rem;
+      box-shadow: var(--shadow);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .brand p {
+      margin: 0.1rem 0 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    nav a {
+      margin-left: 1rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      box-shadow: var(--shadow);
+      padding: 1.25rem;
+    }
+
+    .banner {
+      border-radius: 0.5rem;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.92rem;
+    }
+
+    .banner-info { background: var(--info-bg); border: 1px solid var(--info-border); }
+    .banner-warn { background: var(--warn-bg); border: 1px solid var(--warn-border); }
+    .banner-error { background: var(--error-bg); border: 1px solid var(--error-border); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 0.65rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .phase {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+
+    .muted { color: var(--muted); }
+    .hero-lead { font-size: 1.05rem; max-width: 42rem; }
+    .hero-actions { margin-top: 1.25rem; display: flex; gap: 0.75rem; flex-wrap: wrap; }
+
+    .btn {
+      display: inline-block;
+      padding: 0.55rem 0.9rem;
+      border-radius: 0.5rem;
+      background: var(--accent);
+      color: white !important;
+      font-weight: 600;
+      text-decoration: none !important;
+    }
+
+    .btn-secondary {
+      background: var(--surface);
+      color: var(--text) !important;
+      border: 1px solid var(--border);
+    }
+
+    footer {
+      margin-top: 2rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .section-head h3 {
+      margin: 0 0 0.15rem;
+      font-size: 1.05rem;
+    }
+    .section-head p { margin: 0 0 0.85rem; font-size: 0.88rem; }
+
+    .list-legend {
+      display: grid;
+      grid-template-columns: 4rem minmax(10rem, 1.4fr) 6.5rem 3.5rem 7rem minmax(8rem, 1fr);
+      gap: 0.5rem;
+      padding: 0 0.75rem 0.4rem 1.75rem;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .train-list { display: flex; flex-direction: column; gap: 0.4rem; }
+
+    .train-card {
+      border: 1px solid var(--border);
+      border-radius: 0.6rem;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .train-card[open] { border-color: #9ec5f5; box-shadow: var(--shadow); }
+
+    .train-summary {
+      list-style: none;
+      cursor: pointer;
+      display: grid;
+      grid-template-columns: 4rem minmax(10rem, 1.4fr) 6.5rem 3.5rem 7rem minmax(8rem, 1fr);
+      gap: 0.5rem;
+      align-items: center;
+      padding: 0.7rem 0.75rem 0.7rem 1.75rem;
+      position: relative;
+    }
+    .train-summary::-webkit-details-marker { display: none; }
+    .train-summary::before {
+      content: "▸";
+      position: absolute;
+      left: 0.55rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .train-card[open] > .train-summary::before { content: "▾"; color: var(--accent); }
+
+    .train-summary .train-name { display: block; font-weight: 600; }
+    .train-summary .trip { display: block; font-size: 0.78rem; }
+    .col.rem, .col.diff { font-variant-numeric: tabular-nums; }
+
+    .train-focus {
+      border-top: 1px solid var(--border);
+      background: #f3f6fb;
+      padding: 0.9rem 1rem 1rem;
+    }
+    .focus-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+      gap: 0.65rem 1.25rem;
+    }
+    .focus-grid > div { display: flex; flex-direction: column; gap: 0.15rem; }
+    .focus-label {
+      color: var(--muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+    }
+    .focus-value { font-size: 0.92rem; word-break: break-word; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
+
+    @media (max-width: 720px) {
+      .list-legend { display: none; }
+      .train-summary {
+        grid-template-columns: 3rem 1fr;
+        grid-template-rows: auto auto;
+      }
+      .col.phase, .col.rem, .col.diff, .col.updated { display: none; }
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="shell">
+    <header class="site">
+      <div class="brand">
+        <div class="brand-mark">SM</div>
+        <div>
+          <h1>Subway Market</h1>
+          <p>MTA train tracking for agent markets</p>
+        </div>
+      </div>
+      <nav>
+        <a href="/">Home</a>
+        <a href="/trains">Trains</a>
+      </nav>
+    </header>
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+    <footer>
+      Humans set strategy and bankroll only. Agents trade on late/early outcomes.
+    </footer>
+  </div>
+  <script>
+    (function () {
+      const KEY = "subway.trainOpenKeys";
+      function readOpen() {
+        try { return new Set(JSON.parse(sessionStorage.getItem(KEY) || "[]")); }
+        catch { return new Set(); }
+      }
+      function writeOpen(set) {
+        sessionStorage.setItem(KEY, JSON.stringify([...set]));
+      }
+      document.body.addEventListener("toggle", (ev) => {
+        const el = ev.target;
+        if (!(el instanceof HTMLDetailsElement) || !el.classList.contains("train-card")) return;
+        const key = el.getAttribute("data-dedupe");
+        if (!key) return;
+        const open = readOpen();
+        if (el.open) open.add(key); else open.delete(key);
+        writeOpen(open);
+      }, true);
+      document.body.addEventListener("htmx:afterSwap", (ev) => {
+        const root = ev.target;
+        if (!(root instanceof Element)) return;
+        if (root.id !== "train-panel" && root.id !== "preview") return;
+        const open = readOpen();
+        root.querySelectorAll("details.train-card[data-dedupe]").forEach((el) => {
+          if (open.has(el.getAttribute("data-dedupe"))) el.open = true;
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

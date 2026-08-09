@@ -1,0 +1,21 @@
+[package]
+name = "domain-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "domain"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+diesel-async = { workspace = true }
+domain = { workspace = true }
+dto = { workspace = true }
+futures = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+transport = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,19 @@
+[package]
+name = "backend-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "backend"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true }
+backend = { workspace = true }
+diesel-async = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+transport = { workspace = true }

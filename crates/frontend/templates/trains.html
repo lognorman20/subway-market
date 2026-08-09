@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Tracked trains · Subway Market{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h2>Trains</h2>
+  <p class="muted" style="margin-top: 0;">
+    Tracked vs history — click a row to open the focus panel (same idea as observe).
+    Auto-refreshes every 10s; open rows stay open across refresh.
+  </p>
+
+  <div class="list-legend muted">
+    <span><strong>Route</strong></span>
+    <span><strong>Train</strong></span>
+    <span><strong>Phase</strong></span>
+    <span><strong>Rem</strong></span>
+    <span><strong>Diff</strong></span>
+    <span><strong>Updated</strong></span>
+  </div>
+
+  <div id="train-panel"
+       hx-get="/trains/rows"
+       hx-trigger="load, every 10s"
+       hx-swap="innerHTML">
+    {% include "trains_rows.html" %}
+  </div>
+</section>
+{% endblock %}

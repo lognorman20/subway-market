@@ -1,0 +1,26 @@
+[package]
+name = "ledger-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ledger"
+path = "src/main.rs"
+
+[[bin]]
+name = "ledger-migrate"
+path = "src/bin/ledger_migrate.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+db = { workspace = true }
+diesel = { workspace = true }
+diesel-async = { workspace = true }
+dto = { workspace = true }
+ledger = { workspace = true }
+transport = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

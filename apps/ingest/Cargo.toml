@@ -1,0 +1,17 @@
+[package]
+name = "ingest-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ingest"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+ingest = { workspace = true }
+transport = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

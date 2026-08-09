@@ -1,0 +1,21 @@
+[package]
+name = "observe"
+description = "Read-only ledger TUI for tracked trains"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = "0.10"
+crossterm = { workspace = true }
+db = { workspace = true }
+diesel = { workspace = true }
+diesel-async = { workspace = true }
+futures = { workspace = true }
+ratatui = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

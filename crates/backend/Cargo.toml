@@ -1,0 +1,17 @@
+[package]
+name = "backend"
+description = "HTTP API lane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum = { workspace = true }
+db = { workspace = true }
+diesel-async = { workspace = true }
+dto = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+transport = { workspace = true }
+tower-http = { workspace = true }
