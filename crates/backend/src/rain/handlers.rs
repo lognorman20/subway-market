@@ -380,6 +380,44 @@ async fn apply_settlement(
     // Credit first; on failure leave Pending for retry (do not mark Settled).
     let bankroll = credit_bankroll_locked(state, &funding.agent_id, amount_micro).await?;
 
+    // Interim treasury mirror (Path C): Rain settled Base USDC; mint/skip Monad USDC 1:1
+    // so platform signer can back LMSR. Not a real bridge — see rain/mod.rs.
+    if let Some(chain) = state.chain.as_ref() {
+        let micro = u128::try_from(amount_micro).unwrap_or(0);
+        match chain.treasury_mirror_usdc(micro).await {
+            Ok(crate::trading_chain::TreasuryMirrorResult::Minted { tx_hash }) => {
+                info!(
+                    %funding_id,
+                    %tx_hash,
+                    amount_micro,
+                    "interim treasury mirror: MockUSDC minted to platform (Rain→Monad interim, not a bridge)"
+                );
+            }
+            Ok(crate::trading_chain::TreasuryMirrorResult::Skipped { reason }) => {
+                warn!(
+                    %funding_id,
+                    amount_micro,
+                    %reason,
+                    "interim treasury mirror skipped — ensure platform holds Monad USDC for trades"
+                );
+            }
+            Err(e) => {
+                // Bankroll already credited; do not fail settle — trades may still work if
+                // platform was pre-funded (E2E ensure_platform_funded).
+                warn!(
+                    %funding_id,
+                    error = ?e,
+                    "interim treasury mirror error after bankroll credit"
+                );
+            }
+        }
+    } else {
+        warn!(
+            %funding_id,
+            "no chain client — Rain bankroll credited but no Monad USDC treasury mirror"
+        );
+    }
+
     state
         .pending_funding
         .update(funding_id, |f| {
@@ -398,7 +436,7 @@ async fn apply_settlement(
         agent_id = %funding.agent_id,
         amount_micro,
         bankroll,
-        "rain funding settled — bankroll credited"
+        "rain funding settled — bankroll credited (+ interim treasury mirror attempted)"
     );
 
     Ok(bankroll)

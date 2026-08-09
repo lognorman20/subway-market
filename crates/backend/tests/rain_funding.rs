@@ -7,8 +7,8 @@ use alloy::signers::Signer;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use backend::{
-    router, AppState, AuthStore, FundingConfig, FundingMode, HttpRainClient, PendingFundingStore,
-    RainApi, RainClientError, RainConfig, SettlePollConfig,
+    router, AppState, AuthStore, FundingConfig, FundingMode, HttpRainClient, MockTradingChain,
+    PendingFundingStore, RainApi, RainClientError, RainConfig, SettlePollConfig,
 };
 use diesel_async::pooled_connection::deadpool::Pool;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
@@ -218,9 +218,10 @@ async fn setup_mocks(server: &MockServer, route_id: &str, tx_id: &str) {
         .await;
 }
 
-async fn testnet_app(server: &MockServer) -> axum::Router {
+async fn testnet_app(server: &MockServer) -> (axum::Router, Arc<MockTradingChain>) {
     let cfg = rain_cfg(&server.uri());
     let client = Arc::new(HttpRainClient::new(cfg.clone())) as Arc<dyn RainApi>;
+    let chain = Arc::new(MockTradingChain::balanced());
     let state = AppState {
         pool: pool().await,
         auth: AuthStore::new(),
@@ -229,13 +230,13 @@ async fn testnet_app(server: &MockServer) -> axum::Router {
             seed_bankroll_usdc: 0,
             rain: Some(cfg),
         },
-        chain: None,
+        chain: Some(chain.clone() as Arc<dyn backend::TradingChain>),
         nats: None,
         rain: Some(client),
         pending_funding: PendingFundingStore::new(),
         settle_poll: Some(SettlePollConfig::for_tests()),
     };
-    router(state)
+    (router(state), chain)
 }
 
 #[tokio::test]
@@ -305,7 +306,7 @@ async fn fund_then_poll_credits_bankroll() {
     let tx_id = "b2c3d4e5-f6a7-8901-bcde-f12345678901";
     setup_mocks(&server, route_id, tx_id).await;
 
-    let app = testnet_app(&server).await;
+    let (app, chain) = testnet_app(&server).await;
     let session = human_session(&app).await;
     let agent = create_agent(&app, &session).await;
 
@@ -352,6 +353,11 @@ async fn fund_then_poll_credits_bankroll() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "settled");
     assert_eq!(body["bankroll_usdc"], 100_000_000);
+    assert_eq!(chain.treasury_mirror_call_count(), 1);
+    assert_eq!(
+        chain.treasury_mirror_micro.load(std::sync::atomic::Ordering::SeqCst),
+        100_000_000
+    );
 
     let res = app
         .clone()
@@ -376,7 +382,7 @@ async fn webhook_settles_and_credits() {
     let tx_id = "d2c3d4e5-f6a7-8901-bcde-f12345678901";
     setup_mocks(&server, route_id, tx_id).await;
 
-    let app = testnet_app(&server).await;
+    let (app, chain) = testnet_app(&server).await;
     let session = human_session(&app).await;
     let agent = create_agent(&app, &session).await;
 
@@ -434,6 +440,7 @@ async fn webhook_settles_and_credits() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["handled"], true);
     assert_eq!(body["bankroll_usdc"], 100_000_000);
+    assert_eq!(chain.treasury_mirror_call_count(), 1);
 }
 
 #[tokio::test]
@@ -481,7 +488,7 @@ async fn local_mode_rejects_rain_fund() {
 #[tokio::test]
 async fn webhook_rejects_bad_api_key() {
     let server = MockServer::start().await;
-    let app = testnet_app(&server).await;
+    let (app, _) = testnet_app(&server).await;
 
     let res = app
         .oneshot(
@@ -518,7 +525,7 @@ async fn webhook_missing_api_key_rejects_and_leaves_bankroll() {
     let tx_id = "e2c3d4e5-f6a7-8901-bcde-f12345678901";
     setup_mocks(&server, route_id, tx_id).await;
 
-    let app = testnet_app(&server).await;
+    let (app, _) = testnet_app(&server).await;
     let session = human_session(&app).await;
     let agent = create_agent(&app, &session).await;
 
@@ -615,7 +622,7 @@ async fn concurrent_webhook_settle_credits_once() {
     let tx_id = "f2c3d4e5-f6a7-8901-bcde-f12345678901";
     setup_mocks(&server, route_id, tx_id).await;
 
-    let app = testnet_app(&server).await;
+    let (app, chain) = testnet_app(&server).await;
     let session = human_session(&app).await;
     let agent = create_agent(&app, &session).await;
 
@@ -676,6 +683,11 @@ async fn concurrent_webhook_settle_credits_once() {
     assert_eq!(
         br["available_usdc"], 100_000_000,
         "concurrent settle must credit exactly once"
+    );
+    assert_eq!(
+        chain.treasury_mirror_call_count(),
+        1,
+        "treasury mirror once despite concurrent webhooks"
     );
 }
 

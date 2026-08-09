@@ -66,7 +66,10 @@ All non-2xx JSON: {"error":"...","code":"unauthorized|forbidden|bad_request|not_
 
 ## Funding
 FUNDING_MODE=local → SEED_BANKROLL_USDC (whole USDC) credited on agent create; POST /bankroll/seed resets.
-FUNDING_MODE=testnet → Rain ACH→USDC (POST /funding/rain + webhook/poll); credits Postgres bankroll; agents still trade this HTTP API only. Never call Rain from agent.
+FUNDING_MODE=testnet → Rain ACH→USDC on Base (POST /funding/rain + webhook/poll) → Postgres bankroll credit
+  + interim treasury mirror (MockUSDC 1:1 to platform on Monad/anvil for LMSR). Rain has no Monad rail —
+  mirror is NOT a real bridge. Agents trade this HTTP API only. Never call Rain from agent.
+  Set RAIN_DESTINATION_ADDRESS (compliant Base addr; not anvil #0).
 
 ## Notes
 - Binary market: early vs late only.

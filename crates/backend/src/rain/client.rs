@@ -146,13 +146,46 @@ impl RainApi for HttpRainClient {
 }
 
 /// Ensure active ACH→USDC onramp route (create if missing).
+///
+/// Destination must pass Rain compliance (Base/Eth/… rails — **no Monad**). Prefer
+/// `RAIN_DESTINATION_ADDRESS`; if create fails and an existing compliant onramp exists,
+/// reuse that route's destination (discover from Rain API).
 pub async fn ensure_ach_usdc_onramp(
     client: &dyn RainApi,
 ) -> Result<PaymentRoute, RainClientError> {
     let cfg = client.config();
     let existing = client.list_payment_routes().await?;
-    if let Some(route) = existing.into_iter().find(is_active_ach_usdc_onramp) {
+
+    // Prefer active onramp already pointing at configured destination.
+    if let Some(route) = existing
+        .iter()
+        .find(|r| is_matching_ach_usdc_onramp(r, Some(&cfg.destination_address)))
+        .cloned()
+    {
         return Ok(route);
+    }
+
+    // Any active ACH→USDC onramp (discovered compliant dest from prior create).
+    if let Some(route) = existing.iter().find(|r| is_matching_ach_usdc_onramp(r, None)).cloned()
+    {
+        let discovered = route_destination_address(&route);
+        tracing::info!(
+            configured = %cfg.destination_address,
+            ?discovered,
+            route_id = %route.id,
+            "reusing existing Rain ACH→USDC onramp (destination discovered from Rain API)"
+        );
+        return Ok(route);
+    }
+
+    let dest = cfg.destination_address.clone();
+    if crate::funding::is_anvil_default_address(&dest) {
+        return Err(RainClientError::Config(format!(
+            "RAIN_DESTINATION_ADDRESS is anvil #0 ({dest}); Rain compliance rejects it. \
+             Set RAIN_DESTINATION_ADDRESS to a Base wallet that passes Rain checks \
+             (sandbox tip: {})",
+            crate::funding::RAIN_SANDBOX_COMPLIANT_DEST_EXAMPLE
+        )));
     }
 
     let req = CreatePaymentRouteRequest {
@@ -166,7 +199,7 @@ pub async fn ensure_ach_usdc_onramp(
             rail: cfg.destination_rail.clone(),
             address: OnchainAddress {
                 address_type: "onchain".into(),
-                address: cfg.destination_address.clone(),
+                address: dest,
             },
         },
     };
@@ -174,25 +207,60 @@ pub async fn ensure_ach_usdc_onramp(
     match client.create_payment_route(req).await {
         Ok(route) => Ok(route),
         Err(RainClientError::Api { status, body }) if status.as_u16() == 400 => {
-            // Duplicate — re-list.
+            // Duplicate or compliance — re-list; reuse any active onramp if present.
             tracing::warn!(%body, "create payment route 400; re-listing");
             let existing = client.list_payment_routes().await?;
-            existing
+            if let Some(route) = existing
                 .into_iter()
-                .find(is_active_ach_usdc_onramp)
-                .ok_or_else(|| RainClientError::Config(format!("no onramp after 400: {body}")))
+                .find(|r| is_matching_ach_usdc_onramp(r, None))
+            {
+                return Ok(route);
+            }
+            if body.to_lowercase().contains("compliance") {
+                return Err(RainClientError::Config(format!(
+                    "Rain destination failed compliance: {body}. Set RAIN_DESTINATION_ADDRESS \
+                     to a compliant Base address (sandbox tip: {})",
+                    crate::funding::RAIN_SANDBOX_COMPLIANT_DEST_EXAMPLE
+                )));
+            }
+            Err(RainClientError::Config(format!("no onramp after 400: {body}")))
         }
         Err(e) => Err(e),
     }
 }
 
-fn is_active_ach_usdc_onramp(route: &PaymentRoute) -> bool {
-    route.status.eq_ignore_ascii_case("active")
-        && route.source.currency.eq_ignore_ascii_case("usd")
-        && route.source.rail.eq_ignore_ascii_case("ach")
-        && route
-            .destination
-            .get("currency")
-            .and_then(|v| v.as_str())
-            .is_some_and(|c| c.eq_ignore_ascii_case("usdc"))
+fn is_matching_ach_usdc_onramp(route: &PaymentRoute, want_addr: Option<&str>) -> bool {
+    if !route.status.eq_ignore_ascii_case("active") {
+        return false;
+    }
+    if !route.source.currency.eq_ignore_ascii_case("usd")
+        || !route.source.rail.eq_ignore_ascii_case("ach")
+    {
+        return false;
+    }
+    let currency_ok = route
+        .destination
+        .get("currency")
+        .and_then(|v| v.as_str())
+        .is_some_and(|c| c.eq_ignore_ascii_case("usdc"));
+    if !currency_ok {
+        return false;
+    }
+    match want_addr {
+        None => true,
+        Some(want) => route_destination_address(route)
+            .is_some_and(|a| a.eq_ignore_ascii_case(want)),
+    }
+}
+
+/// Extract on-chain destination address from a payment route JSON destination blob.
+pub fn route_destination_address(route: &PaymentRoute) -> Option<String> {
+    let dest = &route.destination;
+    if let Some(s) = dest.get("address").and_then(|v| v.as_str()) {
+        return Some(s.to_string());
+    }
+    dest.get("address")
+        .and_then(|v| v.get("address"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
 }

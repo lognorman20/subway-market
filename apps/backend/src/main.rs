@@ -80,7 +80,18 @@ async fn main() -> anyhow::Result<()> {
         client_from_config(cfg)
     });
     if funding.mode == backend::FundingMode::Testnet && rain.is_none() {
-        warn!("FUNDING_MODE=testnet but RAIN_* / PLATFORM_SIGNER_ADDRESS incomplete — Rain routes unavailable");
+        warn!(
+            "FUNDING_MODE=testnet but Rain incomplete — need RAIN_API_KEY, RAIN_USER_ID, \
+             RAIN_DESTINATION_ADDRESS (Base wallet that passes Rain compliance; not anvil #0). \
+             Sandbox tip: {}",
+            backend::RAIN_SANDBOX_COMPLIANT_DEST_EXAMPLE
+        );
+    } else if let Some(ref cfg) = funding.rain {
+        info!(
+            dest = %cfg.destination_address,
+            rail = %cfg.destination_rail,
+            "rain onramp destination (ACH→USDC on Rain rail; Monad via interim treasury mirror)"
+        );
     }
 
     let app = router(AppState {

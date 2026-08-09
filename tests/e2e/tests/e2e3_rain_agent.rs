@@ -45,7 +45,9 @@ async fn e2e3_rain_fund_agent_trades() {
     .await
     .expect("backend health");
 
-    // Local anvil still needs platform USDC for LMSR even when Rain funds agent bankroll.
+    // Local anvil still needs platform USDC for LMSR. Rain settles Base USDC; interim
+    // treasury mirror mints MockUSDC 1:1 on settle when USDC is MockUSDC. Monad testnet
+    // Circle USDC (one-pager 0x534b…) has no mint — pre-fund via Circle faucet / CCTP.
     if let Err(e) = ensure_platform_funded() {
         eprintln!("WARN: platform USDC mint skipped/failed: {e}");
     }

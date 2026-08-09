@@ -6,11 +6,20 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use alloy::primitives::{Address, B256, U256};
 use async_trait::async_trait;
-use chain::{ChainClient, ChainConfig, Outcome, Side};
+use chain::{mint_mock_usdc, ChainClient, ChainConfig, Outcome, Side};
 use dto::{MarketOutcome, MarketSide};
 use tokio::sync::Mutex;
 
 use crate::error::ApiError;
+
+/// Result of interim treasury mirror after Rain ACH settle (Path C — not a real bridge).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreasuryMirrorResult {
+    /// MockUSDC minted 1:1 to platform signer on Monad/anvil.
+    Minted { tx_hash: String },
+    /// Real USDC / no mint — platform must already hold spendable USDC.
+    Skipped { reason: String },
+}
 
 /// Backend-facing chain surface (mockable in tests).
 #[async_trait]
@@ -50,6 +59,12 @@ pub trait TradingChain: Send + Sync {
         market_id: u64,
         outcome: MarketOutcome,
     ) -> Result<String, ApiError>;
+
+    /// Interim treasury mirror: credit Monad/anvil USDC to platform 1:1 with Rain settle.
+    ///
+    /// Rain sandbox settles USDC on **Base** (not Monad). Until a real bridge exists,
+    /// local/anvil mints MockUSDC so LMSR spends track funded amount. Not a bridge.
+    async fn treasury_mirror_usdc(&self, amount_micro: u128) -> Result<TreasuryMirrorResult, ApiError>;
 }
 
 fn side_to_chain(side: MarketSide) -> Side {
@@ -212,6 +227,45 @@ where
             .map_err(map_chain_err)?;
         Ok(format!("{tx:#x}"))
     }
+
+    async fn treasury_mirror_usdc(&self, amount_micro: u128) -> Result<TreasuryMirrorResult, ApiError> {
+        if amount_micro == 0 {
+            return Ok(TreasuryMirrorResult::Skipped {
+                reason: "zero amount".into(),
+            });
+        }
+        let client = self.inner.lock().await;
+        let to = client.signer_address();
+        let usdc = client.usdc_address();
+        let usdc_hex = format!("{usdc:#x}");
+        // Circle native USDC on Monad testnet (one-pager) — no mint; use faucet or CCTP.
+        if usdc_hex.eq_ignore_ascii_case(crate::funding::MONAD_TESTNET_USDC) {
+            return Ok(TreasuryMirrorResult::Skipped {
+                reason: format!(
+                    "USDC_ADDRESS is Circle Monad testnet USDC; interim mint N/A — \
+                     top platform via https://faucet.circle.com/ or Circle CCTP from Base \
+                     Rain dest (amount_micro={amount_micro})"
+                ),
+            });
+        }
+        match mint_mock_usdc(client.provider(), usdc, to, U256::from(amount_micro)).await {
+            Ok(tx) => Ok(TreasuryMirrorResult::Minted {
+                tx_hash: format!("{tx:#x}"),
+            }),
+            Err(e) => {
+                // Real USDC has no mint — expected on Monad without MockUSDC.
+                tracing::warn!(
+                    error = %e,
+                    amount_micro,
+                    "interim treasury mirror mint failed (not a real Rain→Monad bridge); \
+                     platform wallet must already hold USDC for LMSR"
+                );
+                Ok(TreasuryMirrorResult::Skipped {
+                    reason: format!("mint unavailable: {e}"),
+                })
+            }
+        }
+    }
 }
 
 /// Connect from env when contract addresses are set; else `None`.
@@ -247,6 +301,8 @@ pub struct MockTradingChain {
     pub create_calls: AtomicUsize,
     pub resolve_calls: AtomicUsize,
     pub next_market_id: AtomicU64,
+    pub treasury_mirror_calls: AtomicUsize,
+    pub treasury_mirror_micro: AtomicU64,
 }
 
 impl MockTradingChain {
@@ -262,6 +318,8 @@ impl MockTradingChain {
             create_calls: AtomicUsize::new(0),
             resolve_calls: AtomicUsize::new(0),
             next_market_id: AtomicU64::new(1),
+            treasury_mirror_calls: AtomicUsize::new(0),
+            treasury_mirror_micro: AtomicU64::new(0),
         }
     }
 
@@ -279,6 +337,10 @@ impl MockTradingChain {
 
     pub fn resolve_call_count(&self) -> usize {
         self.resolve_calls.load(Ordering::SeqCst)
+    }
+
+    pub fn treasury_mirror_call_count(&self) -> usize {
+        self.treasury_mirror_calls.load(Ordering::SeqCst)
     }
 }
 
@@ -372,6 +434,16 @@ impl TradingChain for MockTradingChain {
             return Err(ApiError::Internal("mock chain fail".into()));
         }
         Ok(format!("0x{}", hex::encode(B256::repeat_byte(0x22))))
+    }
+
+    async fn treasury_mirror_usdc(&self, amount_micro: u128) -> Result<TreasuryMirrorResult, ApiError> {
+        self.treasury_mirror_calls.fetch_add(1, Ordering::SeqCst);
+        let capped = u64::try_from(amount_micro).unwrap_or(u64::MAX);
+        self.treasury_mirror_micro
+            .fetch_add(capped, Ordering::SeqCst);
+        Ok(TreasuryMirrorResult::Minted {
+            tx_hash: format!("0x{}", hex::encode(B256::repeat_byte(0xee))),
+        })
     }
 }
 

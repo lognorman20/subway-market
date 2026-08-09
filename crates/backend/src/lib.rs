@@ -21,7 +21,10 @@ pub mod trading_chain;
 
 pub use auth::AuthStore;
 pub use error::ApiError;
-pub use funding::{FundingConfig, FundingMode, RainConfig};
+pub use funding::{
+    FundingConfig, FundingMode, RainConfig, MONAD_TESTNET_CHAIN_ID, MONAD_TESTNET_USDC,
+    RAIN_SANDBOX_COMPLIANT_DEST_EXAMPLE,
+};
 pub use lifecycle::{LifecycleHandler, LIFECYCLE_SUBJECTS};
 pub use rain::{
     client_from_config, major_decimal_to_micro, HttpRainClient, PendingFundingStore, RainApi,
@@ -31,6 +34,7 @@ pub use router::router;
 pub use state::AppState;
 pub use trading_chain::{
     try_connect_from_env as trading_chain_connect, MockTradingChain, TradingChain,
+    TreasuryMirrorResult,
 };
 
 pub fn name() -> &'static str {
