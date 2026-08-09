@@ -575,7 +575,8 @@ cargo check -p frontend -p frontend-app && cargo test -p frontend
 **Implement**
 
 - Rain client: [`rain-sandbox-trial.mintlify.site`](https://rain-sandbox-trial.mintlify.site/reference/rain-api), `Api-Key: $RAIN_API_KEY`.
-- Payment route ACH→USDC; webhook or poll; credit bankroll in Postgres on settlement.
+- Payment route ACH→USDC on **Base** (Rain has no Monad rail). Destination = `RAIN_DESTINATION_ADDRESS` (compliance; not anvil #0). See [`raingentic-monad-builder-one-pager.pdf`](raingentic-monad-builder-one-pager.pdf) for Monad Circle USDC + faucet.
+- Webhook or poll; credit Postgres bankroll; **interim treasury mirror** (MockUSDC mint on anvil / Circle faucet|CCTP on Monad testnet).
 - `FUNDING_MODE=testnet` path only; `local` unchanged.
 - Scoped virtual cards secondary — not main on-ramp.
 
@@ -837,7 +838,7 @@ Human answers locked — orchestrators implement; do not re-ask.
 
 | Item | Default |
 |------|---------|
-| Rain → Monad bridge | Out of scope go-time; `testnet` credits Postgres bankroll via Rain webhook/poll; agents trade HTTP only |
+| Rain → Monad | **Authoritative Monad sheet:** [`docs/raingentic-monad-builder-one-pager.pdf`](raingentic-monad-builder-one-pager.pdf). Rain sandbox rails = Base/Eth/… (**no Monad**). Monad testnet USDC = Circle `0x534b2f3A21130d7a60830c2Df862319e593943A3` ([faucet.circle.com](https://faucet.circle.com/)). Real bridge later = Circle CCTP Base→Monad. Go-time Path C: ACH→Base (`RAIN_DESTINATION_ADDRESS`, not anvil #0) + Postgres bankroll + **interim** MockUSDC mint (anvil) / Circle faucet or CCTP (Monad testnet). |
 | Scoped virtual cards (Rain) | Secondary; ACH payment route is primary on-ramp |
 | `tests/e2e` package | Does not exist yet — slice 11 creates it + workspace member |
 | `cheese` vs `main` | Same repo; **`cheese` is integration** — orchestrator checks out `cheese`, not `main` |
