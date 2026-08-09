@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS agent_market_pnl;
+DROP TABLE IF EXISTS positions;
+DROP TABLE IF EXISTS trades;
+DROP TABLE IF EXISTS markets;
+DROP TABLE IF EXISTS agents;
