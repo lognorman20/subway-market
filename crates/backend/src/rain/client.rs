@@ -7,8 +7,9 @@ use thiserror::Error;
 use crate::funding::RainConfig;
 
 use super::types::{
-    CreatePaymentRouteRequest, OnchainAddress, OnrampDestination, PaymentRoute, RailCurrency,
-    RainTransaction, SimulatePaymentRouteRequest, SimulatePaymentRouteResponse,
+    CreatePaymentRouteRequest, OnchainAddress, OnrampDestination, PaymentRoute,
+    PaymentRoutesListBody, RailCurrency, RainTransaction, SimulatePaymentRouteRequest,
+    SimulatePaymentRouteResponse,
 };
 
 #[derive(Debug, Error)]
@@ -100,8 +101,10 @@ impl RainApi for HttpRainClient {
     }
 
     async fn list_payment_routes(&self) -> Result<Vec<PaymentRoute>, RainClientError> {
-        self.send_json(self.http.get(self.url("/payment-routes")))
-            .await
+        let body: PaymentRoutesListBody = self
+            .send_json(self.http.get(self.url("/payment-routes")))
+            .await?;
+        Ok(body.into_routes())
     }
 
     async fn simulate_payment_route(

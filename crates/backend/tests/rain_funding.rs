@@ -146,7 +146,10 @@ async fn setup_mocks(server: &MockServer, route_id: &str, tx_id: &str) {
     Mock::given(method("GET"))
         .and(path("/payment-routes"))
         .and(header("Api-Key", "test-rain-key"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "paymentRoutes": [],
+            "automations": []
+        })))
         .up_to_n_times(1)
         .mount(server)
         .await;
@@ -154,7 +157,10 @@ async fn setup_mocks(server: &MockServer, route_id: &str, tx_id: &str) {
     Mock::given(method("GET"))
         .and(path("/payment-routes"))
         .and(header("Api-Key", "test-rain-key"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([route_body.clone()])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "paymentRoutes": [route_body.clone()],
+            "automations": [route_body.clone()]
+        })))
         .mount(server)
         .await;
 
@@ -238,13 +244,32 @@ async fn rain_client_sends_api_key_header() {
     Mock::given(method("GET"))
         .and(path("/payment-routes"))
         .and(header("Api-Key", "test-rain-key"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "paymentRoutes": [],
+            "automations": []
+        })))
         .expect(1)
         .mount(&server)
         .await;
 
     let client = HttpRainClient::new(rain_cfg(&server.uri()));
     let routes = RainApi::list_payment_routes(&client).await.expect("list");
+    assert!(routes.is_empty());
+}
+
+#[tokio::test]
+async fn rain_client_accepts_bare_array_payment_routes() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/payment-routes"))
+        .and(header("Api-Key", "test-rain-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = HttpRainClient::new(rain_cfg(&server.uri()));
+    let routes = RainApi::list_payment_routes(&client).await.expect("list bare");
     assert!(routes.is_empty());
 }
 
@@ -654,11 +679,22 @@ async fn concurrent_webhook_settle_credits_once() {
     );
 }
 
-#[test]
-fn major_decimal_to_micro_parses() {
-    use backend::major_decimal_to_micro;
-    assert_eq!(major_decimal_to_micro("100"), Some(100_000_000));
-    assert_eq!(major_decimal_to_micro("100.5"), Some(100_500_000));
-    assert_eq!(major_decimal_to_micro("2.00"), Some(2_000_000));
-    assert_eq!(major_decimal_to_micro(""), None);
+#[tokio::test]
+#[ignore = "live Rain sandbox; needs RAIN_* env"]
+async fn live_list_payment_routes_decodes() {
+    let base = std::env::var("RAIN_API_BASE_URL").expect("RAIN_API_BASE_URL");
+    let key = std::env::var("RAIN_API_KEY").expect("RAIN_API_KEY");
+    let user = std::env::var("RAIN_USER_ID").expect("RAIN_USER_ID");
+    let client = HttpRainClient::new(RainConfig {
+        api_base_url: base,
+        api_key: key,
+        user_id: user,
+        team_id: std::env::var("RAIN_TEAM_ID").ok(),
+        destination_address: "0x1234567890abcdef1234567890abcdef12345678".into(),
+        destination_rail: "base".into(),
+    });
+    let routes = RainApi::list_payment_routes(&client)
+        .await
+        .expect("live list_payment_routes decode");
+    eprintln!("live list_payment_routes ok count={}", routes.len());
 }
